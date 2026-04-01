@@ -1,0 +1,54 @@
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Java / Maven / Gradle
+/target/
+/build/
+/**/target/**
+**/build/**
+*.class
+*.jar
+*.war
+*.ear
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+env/
+.venv/
+
+# Env
+*.env
+.env
+.env.local
+!.env.example
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Logs / temp
+logs/
+*.log
+tmp/
+temp/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
