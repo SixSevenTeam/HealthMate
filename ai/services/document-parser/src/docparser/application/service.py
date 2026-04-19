@@ -21,10 +21,10 @@ from docparser.domain.models import (
     ProcessedDocument,
 )
 
-from docparser.infrastructure.pdf.tree_builder import MarkdownTreeBuilder
+from docparser.infrastructure.pars.tree_builder import MarkdownTreeBuilder
 from docparser.infrastructure.kafka.producer import KafkaEventProducer
 from docparser.infrastructure.minio.storage import MinioStorage
-from docparser.infrastructure.pdf.processor import PDFProcessor
+from docparser.infrastructure.pars.processor import Processor
 from minio.error import S3Error
 
 logger = structlog.get_logger()
@@ -36,7 +36,7 @@ class DocumentProcessingService:
     def __init__(
         self,
         storage: MinioStorage,
-        pdf_processor: PDFProcessor,
+        pdf_processor: Processor,
         tree_builder: MarkdownTreeBuilder,
         producer: KafkaEventProducer,
     ) -> None:
@@ -83,7 +83,7 @@ class DocumentProcessingService:
 
         temp_dir = Path(settings.temp_dir)
         temp_dir.mkdir(parents=True, exist_ok=True)
-        local_pdf = str(temp_dir / f"{event.id}.pdf")
+        local_pdf = str(temp_dir / f"{event.id}.pars")
 
         try:
             try:

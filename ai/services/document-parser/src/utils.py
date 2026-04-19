@@ -16,7 +16,7 @@ def get_base64_md5(file_path: str) -> str:
 
     
 # Подставь путь к своему PDF
-file_name = "/home/hexaend/Загрузки/FULL.pdf"
+file_name = "/home/hexaend/Загрузки/FULL.pars"
 result = get_base64_md5(file_name)
 
 print(f"File: {file_name}")

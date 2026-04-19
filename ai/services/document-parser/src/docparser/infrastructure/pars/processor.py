@@ -34,7 +34,7 @@ class PageChunk:
         return {"page": self.page, "text": self.text}
 
 
-class PDFProcessor:
+class Processor:
     def convert_to_markdown(self, pdf_path: str) -> list[dict[str, Any]]:
         """PDF → список ``{"page": N, "text": "..."}`` по страницам.
 

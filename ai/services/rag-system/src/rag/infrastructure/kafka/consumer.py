@@ -1,5 +1,3 @@
-"""Kafka consumer для RAG system."""
-
 import json
 
 from aiokafka import AIOKafkaConsumer

@@ -8,7 +8,7 @@
 - **Missing postponed annotations**: `src/application/service.py` использует тип `MarkdownTreeBuilder` в аннотациях, но не импортирует `from __future__ import annotations` и сам класс не импортирован — это приведёт к ошибке при проверке аннотаций при импорте.
 - **Startup/Teardown fragility**: В `src/main.py` части старта компонентов выполняются последовательно без атомарного rollback — если `consumer.start()` упадёт, `producer` останется запущен.
 - **Hardcoded/weak defaults for secrets**: В `src/core/config.py` есть значения по умолчанию для `minio_access_key` / `minio_secret_key`. В production это небезопасно.
-- **No tests / CI**: Нет unit/integration тестов для критичных частей (`PDFProcessor`, `MarkdownTreeBuilder`, `MinioStorage`, Kafka adapters).
+- **No tests / CI**: Нет unit/integration тестов для критичных частей (`Processor`, `MarkdownTreeBuilder`, `MinioStorage`, Kafka adapters).
 - **Unpinned dependencies**: `requirements.txt` использует ranges; для reproducible builds лучше фиксировать версии и добавлять hashes/constraints.
 - **Dockerfile improvements**: образ использует `python:3.11-slim` и ставит системные пакеты, но можно уменьшить размер и улучшить caching (multi-stage, minimal apt packages, explicit non-root user).
 - **Error handling and observability**: некоторые ошибки логируются и пробрасываются, но отсутствуют метрики / healthcheck / readiness endpoints и детальные структурированные ошибки.
@@ -20,7 +20,7 @@
   - **Secrets**: Убрать чувствительные значения по умолчанию, сделать обязательными через env (например, без default для `minio_secret_key`) и документировать.
 
 - **Testing & CI**:
-  - Добавить `pytest` тесты: unit для `PDFProcessor._clean_page`, поведенческие тесты для `MarkdownTreeBuilder.build_tree`, и интеграционные для `MinioStorage` (localstack/minio тест instance).
+  - Добавить `pytest` тесты: unit для `Processor._clean_page`, поведенческие тесты для `MarkdownTreeBuilder.build_tree`, и интеграционные для `MinioStorage` (localstack/minio тест instance).
   - Настроить CI (GitHub Actions / GitLab CI): запуск `pytest`, `mypy`/`pyright`, `flake8`/`ruff`, тест-coverage.
 
 - **Packaging & reproducibility**:
@@ -52,8 +52,8 @@
 - [src/core/config.py](src/docparser/core/config.py)
 - [src/core/logger.py](src/docparser/core/logger.py)
 - [src/domain/models.py](src/docparser/domain/models.py)
-- [src/infrastructure/pdf/processor.py](src/docparser/infrastructure/pdf/processor.py)
-- [src/infrastructure/pdf/tree_builder.py](src/docparser/infrastructure/pdf/tree_builder.py)
+- [src/infrastructure/pdf/processor.py](src/docparser/infrastructure/pars/processor.py)
+- [src/infrastructure/pdf/tree_builder.py](src/docparser/infrastructure/pars/tree_builder.py)
 - [src/infrastructure/minio/storage.py](src/docparser/infrastructure/minio/storage.py)
 - [src/infrastructure/kafka/consumer.py](src/docparser/infrastructure/kafka/consumer.py)
 - [src/infrastructure/kafka/producer.py](src/docparser/infrastructure/kafka/producer.py)

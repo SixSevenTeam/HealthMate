@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     Значения по умолчанию соответствуют docker-compose.yml.
     """
 
-    # ── Kafka (Redpanda) ──────────────────────────────────────────
     kafka_bootstrap_servers: str = Field(
         default="localhost:9092",
         description="Kafka broker address",
@@ -27,7 +26,6 @@ class Settings(BaseSettings):
         description="Topic для исходящих событий после обработки",
     )
 
-    # ── MinIO ─────────────────────────────────────────────────────
     minio_endpoint: str = Field(
         default="localhost:9000",
         description="MinIO endpoint (host:port)",
@@ -46,7 +44,6 @@ class Settings(BaseSettings):
         description="Каталог для временных PDF-файлов",
     )
 
-    # ── Логирование ───────────────────────────────────────────────
     log_level: str = Field(default="INFO")
     log_format: str = Field(
         default="json",

@@ -20,7 +20,7 @@
     "title": "Инструкция по применению Парацетамола",
     "category": "medication",
     "language": "ru",
-    "source_filename": "paracetamol.pdf",
+    "source_filename": "paracetamol.pars",
     "page_count": 5,
     "parsed_at": "2026-04-19T15:30:00Z",
     "parser_version": "0.1.0"
@@ -331,7 +331,7 @@
 ```json
 {
   "document_id": "doc-uuid-new",
-  "s3_url": "s3://documents/raw/new-medication-guide.pdf",
+  "s3_url": "s3://documents/raw/new-medication-guide.pars",
   "metadata": {
     "title": "Новый препарат X",
     "category": "medication",

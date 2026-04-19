@@ -13,6 +13,16 @@ class Chunk:
     chunk_index: int
 
 class ChunkingService:
+    def __init__(
+            self,
+            chunk_size: int = settings.chunk_size,
+            chunk_overlap: int = settings.chunk_overlap,
+            min_chunk_size: int = settings.min_chunk_size,
+    ):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.min_chunk_size = min_chunk_size
+
     async def chunk_document(self, json_data: Dict[str, Any]) -> List[Chunk]:
         """Генерирует embeddings для списка текстов."""
         pass

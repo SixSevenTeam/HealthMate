@@ -1,6 +1,6 @@
 import asyncio
 import signal
-from docparser.infrastructure.pdf.tree_builder import MarkdownTreeBuilder
+from docparser.infrastructure.pars.tree_builder import MarkdownTreeBuilder
 import structlog
 
 from docparser.core.config import settings
@@ -9,7 +9,7 @@ from docparser.application.service import DocumentProcessingService
 from docparser.infrastructure.kafka.consumer import KafkaEventConsumer
 from docparser.infrastructure.kafka.producer import KafkaEventProducer
 from docparser.infrastructure.minio.storage import MinioStorage
-from docparser.infrastructure.pdf.processor import PDFProcessor
+from docparser.infrastructure.pars.processor import Processor
 
 setup_logging()
 logger = structlog.get_logger()
@@ -28,7 +28,7 @@ async def main() -> None:
 
     # ── Инфраструктурные компоненты ───────────────────────────────
     storage = MinioStorage()
-    pdf_processor = PDFProcessor()
+    pdf_processor = Processor()
     tree_builder = MarkdownTreeBuilder()
     producer = KafkaEventProducer()
     consumer = KafkaEventConsumer()
