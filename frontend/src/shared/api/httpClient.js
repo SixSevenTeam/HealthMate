@@ -1,67 +1,72 @@
-import { API_BASE_URL, USE_MOCK_API } from './config';
+import { API_BASE_URL, USE_MOCK_API } from "./config";
 
 const mockState = {
   user: {
-    id: 'ca1ae1de-1d9f-5f8b-8840-15821a988dff',
-    email: 'demo1@healthmate.local',
-    firstName: 'Ольга',
-    lastName: 'Козлова',
-    birthDate: '1957-11-22',
+    id: "ca1ae1de-1d9f-5f8b-8840-15821a988dff",
+    email: "demo1@healthmate.local",
+    firstName: "Ольга",
+    lastName: "Козлова",
+    birthDate: "1957-11-22",
   },
   profile: {
     heightCm: 178,
     weightKg: 76.5,
-    bloodType: 'A+',
-    diagnoses: [{ name: 'Hypertension', diagnosedAt: '2020-05-12' }],
-    allergies: [{ allergen: 'Penicillin', reaction: 'Rash' }],
+    bloodType: "A+",
+    diagnoses: [{ name: "Hypertension", diagnosedAt: "2020-05-12" }],
+    allergies: [{ allergen: "Penicillin", reaction: "Rash" }],
     updatedAt: new Date().toISOString(),
   },
   medications: [
     {
-      id: '07e715e3-a6c3-55cd-9042-94d3c55228a5',
-      tradeName: 'Ибупрофен',
+      id: "07e715e3-a6c3-55cd-9042-94d3c55228a5",
+      tradeName: "Ибупрофен",
       customName: null,
       doseAmount: 200,
-      doseUnit: 'mg',
-      instructions: 'После еды',
+      doseUnit: "mg",
+      instructions: "После еды",
       doseWarning: null,
-      safetyStatus: 'ok',
+      safetyStatus: "ok",
       safetyWarnings: [],
       isActive: true,
-      startDate: '2026-04-01',
+      startDate: "2026-04-01",
       endDate: null,
-      schedules: [{ id: 'sch-1', timeOfDay: '08:00:00', daysOfWeek: [1, 2, 3, 4, 5] }],
+      schedules: [
+        { id: "sch-1", timeOfDay: "08:00:00", daysOfWeek: [1, 2, 3, 4, 5] },
+      ],
     },
     {
-      id: 'med-2',
+      id: "med-2",
       tradeName: null,
-      customName: 'Омепразол',
+      customName: "Омепразол",
       doseAmount: 20,
-      doseUnit: 'mg',
-      instructions: 'Утром до еды',
+      doseUnit: "mg",
+      instructions: "Утром до еды",
       doseWarning: null,
-      safetyStatus: 'ok',
+      safetyStatus: "ok",
       safetyWarnings: [],
       isActive: true,
-      startDate: '2026-04-10',
+      startDate: "2026-04-10",
       endDate: null,
-      schedules: [{ id: 'sch-2', timeOfDay: '12:30:00', daysOfWeek: [1, 2, 3, 4, 5] }],
+      schedules: [
+        { id: "sch-2", timeOfDay: "12:30:00", daysOfWeek: [1, 2, 3, 4, 5] },
+      ],
     },
   ],
   conversations: [
     {
-      id: 'conv-1',
-      title: 'Новая консультация',
+      id: "conv-1",
+      title: "Новая консультация",
       createdAt: new Date().toISOString(),
     },
   ],
   messagesByConversation: {
-    'conv-1': [
+    "conv-1": [
       {
-        id: 'msg-1',
-        conversationId: 'conv-1',
-        role: 'assistant',
-        content: 'Здравствуйте. Опишите ваши симптомы, и я помогу с общими рекомендациями.',
+        id: "msg-1",
+        conversationId: "conv-1",
+        role: "assistant",
+        content:
+          "Здравствуйте. Опишите ваши симптомы, и я помогу с общими рекомендациями.",
         createdAt: new Date().toISOString(),
       },
     ],
@@ -85,48 +90,50 @@ function toDashboardSummary() {
   const active = mockState.medications.filter((item) => item.isActive);
   const adherence = active.map((item) => ({
     medicationId: item.id,
-    tradeName: item.tradeName || item.customName || 'Medication',
+    tradeName: item.tradeName || item.customName || "Medication",
     totalScheduled: 7,
     totalTaken: 6,
     adherencePercent: 85.71,
-    missedDates: ['2026-04-03'],
+    missedDates: ["2026-04-03"],
   }));
   return {
     period: {
-      from: '2026-04-01',
-      to: '2026-04-07',
+      from: "2026-04-01",
+      to: "2026-04-07",
     },
     adherence,
-    insights: [`Overall adherence: ${adherence.length > 0 ? '85.71' : '0.00'}%`],
+    insights: [
+      `Overall adherence: ${adherence.length > 0 ? "85.71" : "0.00"}%`,
+    ],
   };
 }
 
 async function mockRequest(path, options = {}) {
-  const method = (options.method || 'GET').toUpperCase();
+  const method = (options.method || "GET").toUpperCase();
   const body = readJsonBody(options);
   const now = new Date().toISOString();
 
-  if (path === '/api/health' && method === 'GET') {
-    return { status: 'UP', service: 'healthmate-backend', timestamp: now };
+  if (path === "/api/health" && method === "GET") {
+    return { status: "UP", service: "healthmate-backend", timestamp: now };
   }
 
-  if (path === '/api/auth/me' && method === 'GET') {
+  if (path === "/api/auth/me" && method === "GET") {
     return mockState.user;
   }
 
-  if (path === '/api/auth/login' && method === 'POST') {
+  if (path === "/api/auth/login" && method === "POST") {
     return mockState.user;
   }
 
-  if (path === '/api/auth/logout' && method === 'POST') {
-    return { message: 'Logged out successfully' };
+  if (path === "/api/auth/logout" && method === "POST") {
+    return { message: "Logged out successfully" };
   }
 
-  if (path === '/api/profile' && method === 'GET') {
+  if (path === "/api/profile" && method === "GET") {
     return mockState.profile;
   }
 
-  if (path === '/api/profile' && method === 'PUT') {
+  if (path === "/api/profile" && method === "PUT") {
     mockState.profile = {
       ...mockState.profile,
       ...body,
@@ -135,7 +142,7 @@ async function mockRequest(path, options = {}) {
     return { updatedAt: mockState.profile.updatedAt };
   }
 
-  if (path.startsWith('/api/medications?page=') && method === 'GET') {
+  if (path.startsWith("/api/medications?page=") && method === "GET") {
     const active = mockState.medications.filter((item) => item.isActive);
     const inactive = mockState.medications.filter((item) => !item.isActive);
     return {
@@ -147,35 +154,37 @@ async function mockRequest(path, options = {}) {
     };
   }
 
-  if (path === '/api/medications/validate' && method === 'POST') {
+  if (path === "/api/medications/validate" && method === "POST") {
     const warnings = [];
-    if ((body.customName || '').toLowerCase().includes('ибупрофен')) {
-      warnings.push('Проверьте совместимость с гастропротекцией при длительном приеме.');
+    if ((body.customName || "").toLowerCase().includes("ибупрофен")) {
+      warnings.push(
+        "Проверьте совместимость с гастропротекцией при длительном приеме.",
+      );
     }
     return {
-      status: warnings.length > 0 ? 'warning' : 'ok',
+      status: warnings.length > 0 ? "warning" : "ok",
       warnings,
       blockers: [],
       metadata: {},
     };
   }
 
-  if (path === '/api/medications' && method === 'POST') {
+  if (path === "/api/medications" && method === "POST") {
     const created = {
-      id: uid('med'),
+      id: uid("med"),
       tradeName: null,
-      customName: body.customName || 'Новое лекарство',
+      customName: body.customName || "Новое лекарство",
       doseAmount: body.doseAmount || 0,
-      doseUnit: body.doseUnit || 'mg',
-      instructions: body.instructions || '',
+      doseUnit: body.doseUnit || "mg",
+      instructions: body.instructions || "",
       doseWarning: null,
-      safetyStatus: 'ok',
+      safetyStatus: "ok",
       safetyWarnings: [],
       isActive: true,
-      startDate: body.startDate || '2026-04-01',
+      startDate: body.startDate || "2026-04-01",
       endDate: body.endDate || null,
       schedules: (body.schedules || []).map((schedule) => ({
-        id: uid('sch'),
+        id: uid("sch"),
         ...schedule,
       })),
     };
@@ -183,27 +192,27 @@ async function mockRequest(path, options = {}) {
     return created;
   }
 
-  if (path.startsWith('/api/medications/') && method === 'DELETE') {
-    const id = path.split('/').at(-1);
+  if (path.startsWith("/api/medications/") && method === "DELETE") {
+    const id = path.split("/").at(-1);
     const target = mockState.medications.find((item) => item.id === id);
     if (target) {
       target.isActive = false;
       return { id: target.id, isActive: false };
     }
-    throw new Error('Medication not found');
+    throw new Error("Medication not found");
   }
 
-  if (path.endsWith('/active') && method === 'PUT') {
-    const id = path.split('/')[3];
+  if (path.endsWith("/active") && method === "PUT") {
+    const id = path.split("/")[3];
     const target = mockState.medications.find((item) => item.id === id);
     if (target) {
       target.isActive = Boolean(body.isActive);
       return { id: target.id, isActive: target.isActive };
     }
-    throw new Error('Medication not found');
+    throw new Error("Medication not found");
   }
 
-  if (path.startsWith('/api/conversations?page=') && method === 'GET') {
+  if (path.startsWith("/api/conversations?page=") && method === "GET") {
     return {
       content: mockState.conversations,
       totalElements: mockState.conversations.length,
@@ -212,10 +221,10 @@ async function mockRequest(path, options = {}) {
     };
   }
 
-  if (path === '/api/conversations' && method === 'POST') {
+  if (path === "/api/conversations" && method === "POST") {
     const created = {
-      id: uid('conv'),
-      title: body.title || 'Новая консультация',
+      id: uid("conv"),
+      title: body.title || "Новая консультация",
       createdAt: now,
     };
     mockState.conversations.unshift(created);
@@ -223,25 +232,26 @@ async function mockRequest(path, options = {}) {
     return created;
   }
 
-  if (path.includes('/messages') && method === 'GET') {
-    const conversationId = path.split('/')[3];
+  if (path.includes("/messages") && method === "GET") {
+    const conversationId = path.split("/")[3];
     return mockState.messagesByConversation[conversationId] || [];
   }
 
-  if (path.includes('/messages') && method === 'POST') {
-    const conversationId = path.split('/')[3];
+  if (path.includes("/messages") && method === "POST") {
+    const conversationId = path.split("/")[3];
     const userMessage = {
-      id: uid('msg'),
+      id: uid("msg"),
       conversationId,
-      role: 'user',
-      content: body.content || '',
+      role: "user",
+      content: body.content || "",
       createdAt: now,
     };
     const assistantMessage = {
-      id: uid('msg'),
+      id: uid("msg"),
       conversationId,
-      role: 'assistant',
-      content: 'Тестовая заглушка AI: похоже на легкие симптомы. При ухудшении обратитесь к врачу.',
+      role: "assistant",
+      content:
+        "Тестовая заглушка AI: похоже на легкие симптомы. При ухудшении обратитесь к врачу.",
       createdAt: now,
     };
     const list = mockState.messagesByConversation[conversationId] || [];
@@ -250,31 +260,154 @@ async function mockRequest(path, options = {}) {
     return {
       userMessage,
       assistantMessage,
-      messageType: 'question',
-      disclaimer: 'Это тестовые данные для просмотра интерфейса.',
+      messageType: "question",
+      disclaimer: "Это тестовые данные для просмотра интерфейса.",
       recommendedDrugs: [],
     };
   }
 
-  if (path.startsWith('/api/dashboard/summary') && method === 'GET') {
+  if (path.startsWith("/api/dashboard/summary") && method === "GET") {
     return toDashboardSummary();
+  }
+
+  // Поиск лекарств
+  if (path.startsWith("/api/drugs/search") && method === "GET") {
+    const q = new URL(`http://localhost${path}`).searchParams.get("q");
+    const drugs = [
+      {
+        id: "d1",
+        tradeName: "Ибупрофен",
+        internationalName: "Ibuprofen",
+        atxCode: "M01AE01",
+        doseUnit: "мг",
+        minDose: 200,
+        maxDose: 1200,
+        isInRag: false,
+        hasMedia: false,
+      },
+      {
+        id: "d2",
+        tradeName: "Омепразол",
+        internationalName: "Omeprazole",
+        atxCode: "A02BC01",
+        doseUnit: "мг",
+        minDose: 20,
+        maxDose: 40,
+        isInRag: false,
+        hasMedia: false,
+      },
+      {
+        id: "d3",
+        tradeName: "Амоксициллин",
+        internationalName: "Amoxicillin",
+        atxCode: "J01CA04",
+        doseUnit: "мг",
+        minDose: 250,
+        maxDose: 1000,
+        isInRag: false,
+        hasMedia: false,
+      },
+    ];
+    if (!q) return { results: drugs };
+    const results = drugs.filter(
+      (d) =>
+        d.tradeName.toLowerCase().includes(q.toLowerCase()) ||
+        d.internationalName.toLowerCase().includes(q.toLowerCase()),
+    );
+    return { results };
+  }
+
+  // Расписания лекарства
+  if (path.endsWith("/schedules") && method === "GET") {
+    const medId = path.split("/")[3];
+    const med = mockState.medications.find((m) => m.id === medId);
+    return med?.schedules || [];
+  }
+
+  if (path.endsWith("/schedules") && method === "POST") {
+    const medId = path.split("/")[3];
+    const med = mockState.medications.find((m) => m.id === medId);
+    if (med) {
+      const schedule = { id: uid("sch"), ...body };
+      med.schedules.push(schedule);
+      return schedule;
+    }
+    throw new Error("Medication not found");
+  }
+
+  if (path.startsWith("/api/medications/schedules/") && method === "DELETE") {
+    const scheduleId = path.split("/").at(-1);
+    for (const med of mockState.medications) {
+      const idx = med.schedules.findIndex((s) => s.id === scheduleId);
+      if (idx >= 0) {
+        med.schedules.splice(idx, 1);
+        return { id: scheduleId, deleted: true };
+      }
+    }
+    throw new Error("Schedule not found");
+  }
+
+  // Логи приема
+  if (path.includes("/intake-logs") && method === "GET") {
+    const logs = [
+      {
+        id: "log1",
+        scheduledAt: "2026-04-01T08:00:00Z",
+        takenAt: "2026-04-01T08:15:00Z",
+        status: "taken",
+        confirmedVia: "app",
+      },
+      {
+        id: "log2",
+        scheduledAt: "2026-04-02T08:00:00Z",
+        takenAt: null,
+        status: "missed",
+        confirmedVia: "app",
+      },
+      {
+        id: "log3",
+        scheduledAt: "2026-04-03T08:00:00Z",
+        takenAt: "2026-04-03T08:30:00Z",
+        status: "taken",
+        confirmedVia: "app",
+      },
+    ];
+    return { logs };
+  }
+
+  if (
+    path.includes("/intake-logs/") &&
+    path.endsWith("/take") &&
+    method === "POST"
+  ) {
+    const logId = path.split("/").at(-2);
+    return { id: logId, status: "taken" };
+  }
+
+  if (
+    path.includes("/intake-logs/") &&
+    path.endsWith("/status") &&
+    method === "PATCH"
+  ) {
+    const logId = path.split("/").at(-2);
+    return { id: logId, status: body.status };
   }
 
   throw new Error(`Mock route is not implemented: ${method} ${path}`);
 }
 
 async function parseResponse(response) {
-  const contentType = response.headers.get('content-type') || '';
-  const isJson = contentType.includes('application/json');
+  const contentType = response.headers.get("content-type") || "";
+  const isJson = contentType.includes("application/json");
   const payload = isJson ? await response.json() : null;
 
   if (response.ok) {
     return payload;
   }
 
-  const error = new Error(payload?.message || 'Request failed');
+  const error = new Error(payload?.message || "Request failed");
   error.status = response.status;
-  error.code = payload?.error || 'REQUEST_ERROR';
+  error.code = payload?.error || "REQUEST_ERROR";
   error.fields = payload?.fields || null;
   throw error;
 }
@@ -285,9 +418,9 @@ export async function httpRequest(path, options = {}) {
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    credentials: 'include',
+    credentials: "include",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       ...(options.headers || {}),
     },
     ...options,
