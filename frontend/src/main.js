@@ -1,6 +1,6 @@
 import './assets/main.css'
 
 import { createApp } from 'vue'
-import App from './App.vue'
+import HealthMateApp from './HealthMateApp.vue'
 
-createApp(App).mount('#app')
+createApp(HealthMateApp).mount('#app')
