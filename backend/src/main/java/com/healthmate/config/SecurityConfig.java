@@ -56,18 +56,19 @@ public class SecurityConfig {
                     "/healthmate/api/auth/login",
                     "/healthmate/api/auth/logout",
                     "/healthmate/api/health",
+                    "/healthmate/health",
                     "/healthmate/v3/api-docs/**",
                     "/healthmate/swagger-ui/**",
                     "/healthmate/swagger-ui.html",
                     "/api/auth/register",
                     "/api/auth/login",
                     "/api/auth/logout",
+                    "/api/health",
+                    "/health",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/health"
+                    "/swagger-ui.html"
                 ).permitAll()
-                .requestMatchers("/healthmate/api/auth/**", "/api/auth/**").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class)
