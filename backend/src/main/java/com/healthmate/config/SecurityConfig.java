@@ -1,5 +1,7 @@
 package com.healthmate.config;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.healthmate.auth.service.JwtTokenProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,19 +21,23 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final ObjectMapper objectMapper;
 
     @Value("${spring.web.cors.allowed-origins:http://localhost:5173}")
     private String allowedOrigins;
 
-    public SecurityConfig(JwtTokenProvider jwtTokenProvider) {
+    public SecurityConfig(JwtTokenProvider jwtTokenProvider, ObjectMapper objectMapper) {
         this.jwtTokenProvider = jwtTokenProvider;
+        this.objectMapper = objectMapper;
     }
 
     @Bean
@@ -47,43 +53,50 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                    "/healthmate/api/auth/register",
-                    "/healthmate/api/auth/login",
-                    "/healthmate/api/auth/logout",
-                    "/healthmate/api/health",
-                    "/healthmate/health",
-                    "/healthmate/v3/api-docs/**",
-                    "/healthmate/swagger-ui/**",
-                    "/healthmate/swagger-ui.html",
-                    "/api/auth/register",
-                    "/api/auth/login",
-                    "/api/auth/logout",
-                    "/api/health",
-                    "/health",
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html"
-                ).permitAll()
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class)
-            .exceptionHandling(exceptions -> exceptions
-                .authenticationEntryPoint((request, response, authException) -> {
-                    response.setContentType("application/json");
-                    response.setStatus(401);
-                    response.getWriter().write(buildErrorJson("UNAUTHORIZED", "Invalid or missing token"));
-                })
-                .accessDeniedHandler((request, response, accessDeniedException) -> {
-                    response.setContentType("application/json");
-                    response.setStatus(403);
-                    response.getWriter().write(buildErrorJson("FORBIDDEN", "Access denied"));
-                })
-            );
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                "/healthmate/api/auth/register",
+                                "/healthmate/api/auth/login",
+                                "/healthmate/api/auth/logout",
+                                "/api/auth/register",
+                                "/api/auth/login",
+                                "/api/auth/logout",
+                                "/healthmate/api/health",
+                                "/healthmate/health",
+                                "/api/health",
+                                "/health",
+                                "/healthmate/v3/api-docs/**",
+                                "/healthmate/swagger-ui/**",
+                                "/healthmate/swagger-ui.html",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html",
+                                "/healthmate/api/drugs/assets/**",
+                                "/healthmate/api/drugs/img/**",
+                                "/api/drugs/assets/**",
+                                "/api/drugs/img/**",
+                                "/assets/**",
+                                "/img/**"
+                        )
+                        .permitAll()
+                        .anyRequest().authenticated()
+                )
+                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class)
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setContentType("application/json");
+                            response.setStatus(401);
+                            response.getWriter().write(buildErrorJson("UNAUTHORIZED", "Invalid or missing token"));
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            response.setContentType("application/json");
+                            response.setStatus(403);
+                            response.getWriter().write(buildErrorJson("FORBIDDEN", "Access denied"));
+                        })
+                );
 
         return http.build();
     }
@@ -92,9 +105,9 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         List<String> origins = Arrays.stream(allowedOrigins.split(","))
-            .map(String::trim)
-            .filter(origin -> !origin.isBlank())
-            .toList();
+                .map(String::trim)
+                .filter(origin -> !origin.isBlank())
+                .toList();
         configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
@@ -107,11 +120,15 @@ public class SecurityConfig {
     }
 
     private String buildErrorJson(String error, String message) {
-        return "{"
-            + "\"error\":\"" + error + "\"," 
-            + "\"message\":\"" + message + "\"," 
-            + "\"fields\":null,"
-            + "\"timestamp\":\"" + Instant.now() + "\""
-            + "}";
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("error", error);
+        payload.put("message", message);
+        payload.put("fields", null);
+        payload.put("timestamp", Instant.now());
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException ex) {
+            return "{\"error\":\"" + error + "\",\"message\":\"" + message + "\"}";
+        }
     }
 }
