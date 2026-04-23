@@ -1,20 +1,30 @@
 package com.healthmate.medications.service;
 
+import com.healthmate.aigateway.service.AIGatewayService;
 import com.healthmate.medications.entity.*;
 import com.healthmate.medications.repository.*;
 import com.healthmate.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -30,19 +40,101 @@ public class MedicationsService {
     private final UserMedicationRepository userMedicationRepository;
     private final ScheduleRepository scheduleRepository;
     private final IntakeLogRepository intakeLogRepository;
+    private final AIGatewayService aiGatewayService;
+
+    @Value("${healthmate.dataset-root:dataset/healthmate_2018-2023/data}")
+    private String datasetRoot;
 
     public MedicationsService(DrugRepository drugRepository, 
                               UserMedicationRepository userMedicationRepository,
                               ScheduleRepository scheduleRepository,
-                              IntakeLogRepository intakeLogRepository) {
+                              IntakeLogRepository intakeLogRepository,
+                              AIGatewayService aiGatewayService) {
         this.drugRepository = drugRepository;
         this.userMedicationRepository = userMedicationRepository;
         this.scheduleRepository = scheduleRepository;
         this.intakeLogRepository = intakeLogRepository;
+        this.aiGatewayService = aiGatewayService;
     }
 
     public List<Drug> searchDrugs(String query) {
         return drugRepository.searchByQuery(query);
+    }
+
+    public Drug getDrugById(UUID drugId) {
+        return drugRepository.findById(drugId)
+            .orElseThrow(() -> new ResourceNotFoundException("Drug not found"));
+    }
+
+    public String getDrugDetailsHtml(UUID drugId) {
+        Drug drug = getDrugById(drugId);
+
+        if (drug.getDetailsHtmlPath() != null && !drug.getDetailsHtmlPath().isBlank()) {
+            try {
+                Path detailsPath = resolveStoredPath(drug.getDetailsHtmlPath());
+                if (Files.exists(detailsPath) && Files.isRegularFile(detailsPath)) {
+                    return readHtmlWithFallback(detailsPath);
+                }
+            } catch (ResourceNotFoundException ex) {
+                log.debug("Drug details path is outside dataset root or invalid: {}", drug.getDetailsHtmlPath());
+            }
+        }
+
+        return aiGatewayService.getDrugMedia(drugId.toString());
+    }
+
+    public DrugImagePayload getDrugPackImagePayload(UUID drugId) {
+        Drug drug = getDrugById(drugId);
+        if (drug.getPackImagePath() == null || drug.getPackImagePath().isBlank()) {
+            throw new ResourceNotFoundException("Drug image not found");
+        }
+
+        Path imagePath = resolveStoredPath(drug.getPackImagePath());
+        if (!Files.exists(imagePath) || !Files.isRegularFile(imagePath)) {
+            throw new ResourceNotFoundException("Drug image not found");
+        }
+
+        Resource image;
+        try {
+            image = new UrlResource(imagePath.toUri());
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to read drug image", ex);
+        }
+
+        return new DrugImagePayload(image, detectImageContentType(imagePath));
+    }
+
+    public Resource getDrugPackImage(UUID drugId) {
+        return getDrugPackImagePayload(drugId).image();
+    }
+
+    public String resolveContentTypeForImage(UUID drugId) {
+        return getDrugPackImagePayload(drugId).contentType();
+    }
+
+    private String detectImageContentType(Path imagePath) {
+        String probed = null;
+        try {
+            probed = Files.probeContentType(imagePath);
+        } catch (IOException ex) {
+            log.debug("Could not probe content type for {}", imagePath, ex);
+        }
+
+        if (probed != null && !probed.isBlank()) {
+            return probed;
+        }
+
+        String lowerPath = imagePath.toString().toLowerCase(Locale.ROOT);
+        if (lowerPath.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lowerPath.endsWith(".webp")) {
+            return "image/webp";
+        }
+        if (lowerPath.endsWith(".gif")) {
+            return "image/gif";
+        }
+        return "image/jpeg";
     }
 
     public Page<UserMedication> getUserMedications(UUID userId, Pageable pageable) {
@@ -297,4 +389,60 @@ public class MedicationsService {
                         );
                         generateIntakeLogs(userMedicationId);
                     }
+
+    private String readHtmlWithFallback(Path path) {
+        try {
+            byte[] bytes = Files.readAllBytes(path);
+            String utf8 = new String(bytes, StandardCharsets.UTF_8);
+            if (!utf8.contains("\uFFFD")) {
+                return utf8;
+            }
+            return new String(bytes, java.nio.charset.Charset.forName("windows-1251"));
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to read drug details HTML", ex);
+        }
+    }
+
+    private Path resolveStoredPath(String storedPath) {
+        if (storedPath == null || storedPath.isBlank()) {
+            throw new ResourceNotFoundException("Drug file not found");
+        }
+
+        Path root = Paths.get(datasetRoot).toAbsolutePath().normalize();
+        Path raw = Paths.get(storedPath).normalize();
+        Path cwd = Paths.get("").toAbsolutePath().normalize();
+
+        List<Path> candidates = new ArrayList<>();
+        if (raw.isAbsolute()) {
+            candidates.add(raw.toAbsolutePath().normalize());
+        } else {
+            candidates.add(root.resolve(raw).normalize());
+            candidates.add(cwd.resolve(raw).normalize());
+            candidates.add(cwd.resolve("..").resolve(raw).normalize());
+        }
+
+        Path firstSafe = null;
+        for (Path candidate : candidates) {
+            if (!candidate.startsWith(root)) {
+                continue;
+            }
+
+            if (firstSafe == null) {
+                firstSafe = candidate;
+            }
+
+            if (Files.exists(candidate)) {
+                return candidate;
+            }
+        }
+
+        if (firstSafe != null) {
+            return firstSafe;
+        }
+
+        throw new ResourceNotFoundException("Drug file not found");
+    }
+
+    public record DrugImagePayload(Resource image, String contentType) {
+    }
 }

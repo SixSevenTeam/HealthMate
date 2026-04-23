@@ -37,7 +37,7 @@ spring:
   web:
     cors:
       allowed-origins: ${FRONTEND_URL:http://localhost:5173}
-      allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+      allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       allowed-headers: "*"
       allow-credentials: true
       max-age: 3600
@@ -71,6 +71,9 @@ python:
   request-timeout-ms: 30000
   retry-count: 2
   retry-delay-ms: 2000
+
+healthmate:
+  dataset-root: ${HEALTHMATE_DATASET_ROOT:dataset/healthmate_2018-2023/data}
 
 springdoc:
   api-docs:

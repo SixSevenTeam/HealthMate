@@ -3,8 +3,11 @@ package com.healthmate.medications.entity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -14,7 +17,10 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "drugs", schema = "medications")
-@Data
+@Getter
+@Setter
+@ToString
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -22,6 +28,7 @@ public class Drug {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
+    @EqualsAndHashCode.Include
     private UUID id;
 
     @Column(name = "trade_name", nullable = false, length = 255)
@@ -45,6 +52,15 @@ public class Drug {
     @Column(name = "is_in_rag")
     @Builder.Default
     private Boolean isInRag = false;
+
+    @Column(name = "source_file", length = 255)
+    private String sourceFile;
+
+    @Column(name = "details_html_path", length = 1024)
+    private String detailsHtmlPath;
+
+    @Column(name = "pack_image_path", length = 1024)
+    private String packImagePath;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
