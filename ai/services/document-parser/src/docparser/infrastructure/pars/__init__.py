@@ -1,14 +1,3 @@
-"""Обработчик HTM/HTML-файлов — конвертация в Markdown-чанки.
-
-Pipeline:
-    1. Чтение файла с автоопределением кодировки (charset-normalizer)
-    2. Парсинг HTML через BeautifulSoup (lxml)
-    3. Удаление структурного мусора (колонтитулы, оглавления)
-    4. Конвертация очищенного HTML → Markdown (html2text)
-    5. Постобработка Markdown (unicode-мусор, лишние пустые строки)
-    6. Возврат одного чанка {"page": 1, "text": "..."} на файл
-"""
-
 from __future__ import annotations
 
 import re
@@ -21,20 +10,20 @@ from charset_normalizer import from_path
 
 log = structlog.get_logger()
 
-# ── Регулярные выражения для постобработки Markdown ───────────────────────────
+# Регулярные выражения для постобработки Markdown
 _RE_UNICODE_JUNK = re.compile(
     r"[\u00a0\u200b\u200c\u200d\ufeff\u2028\u2029]"
 )
 _RE_MULTIPLE_BLANK = re.compile(r"\n{3,}")
 
 
-class Processor:
-    """Конвертирует HTM/HTML-файлы инструкций к лекарствам в чанки Markdown.
+"""Конвертирует HTM/HTML-файлы инструкций к лекарствам в чанки Markdown.
 
     Файлы небольшие (одна инструкция = один документ), поэтому всегда
     возвращается единственный чанк с page=1.  Контент максимально сохраняется:
     удаляется только структурный chrome (header, footer, nav, TOC, скрипты).
     """
+class Processor:
 
     # CSS-селекторы элементов, которые считаются структурным мусором
     _BOILERPLATE_SELECTORS: list[str] = [
