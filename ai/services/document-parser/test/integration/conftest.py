@@ -1,5 +1,3 @@
-"""Фикстуры для интеграционных тестов — все внешние зависимости замокированы."""
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
