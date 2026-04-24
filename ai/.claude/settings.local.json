@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/Project/Vladimir/Java/HealthMate/ai/services/rag-system -name \"__init__.py\" -exec sh -c 'echo \"=== {} ===\" && wc -l \"$1\"' _ {} \\\\;)"
+    ]
+  }
+}

@@ -1,30 +1,35 @@
-"""Kafka consumer на базе aiokafka.
+
+from __future__ import annotations
+
+import json
+from typing import Awaitable, Callable
+
+import structlog
+from aiokafka import AIOKafkaConsumer
+from pydantic import ValidationError
+
+from docparser.core import settings
+from docparser.domain import IncomingEvent
+
+log = structlog.get_logger()
+
+"""Kafka-консьюмер на базе aiokafka.
 
 Реализует At-Least-Once семантику:
 - auto_commit выключен
 - offset коммитится только ПОСЛЕ успешной обработки сообщения
-- при падении — сообщение будет прочитано повторно (idempotency
-  обеспечивается на уровне application service)
+- ошибки десериализации (плохой JSON / невалидный контракт) коммитятся
+  как dead-letter, чтобы не застрять на одном сообщении навсегда
+- ошибки обработчика — offset НЕ коммитится, сообщение будет прочитано
+  повторно при рестарте (idempotency обеспечивается на уровне сервиса)
 """
-
-import json
-from typing import Callable, Awaitable
-
-import structlog
-from aiokafka import AIOKafkaConsumer
-
-from docparser.core.config import settings
-from docparser.domain.models import IncomingEvent
-
-logger = structlog.get_logger()
-
-
+"""Потребитель Kafka-сообщений с событиями документов."""
 class KafkaEventConsumer:
-    """Потребитель Kafka-сообщений с PDF-событиями."""
 
     def __init__(self) -> None:
         self._consumer: AIOKafkaConsumer | None = None
 
+    """Инициализирует и запускает Kafka-консьюмер."""
     async def start(self) -> None:
         self._consumer = AIOKafkaConsumer(
             settings.kafka_input_topic,
@@ -35,41 +40,59 @@ class KafkaEventConsumer:
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         )
         await self._consumer.start()
-        logger.info(
+        log.info(
             "kafka_consumer_started",
             topic=settings.kafka_input_topic,
             group=settings.kafka_consumer_group,
         )
 
+    """Graceful shutdown консьюмера."""
     async def stop(self) -> None:
         if self._consumer:
             await self._consumer.stop()
-            logger.info("kafka_consumer_stopped")
+            log.info("kafka_consumer_stopped")
 
-    async def consume(
-        self,
-        handler: Callable[[IncomingEvent], Awaitable[None]],
-    ) -> None:
-        """Бесконечный цикл чтения сообщений.
+    """Бесконечный цикл чтения сообщений из Kafka.
 
+        Args:
+            handler: Async-функция обработки одного события.
+
+        Raises:
+            RuntimeError: Если консьюмер не был запущен через start().
         """
+    async def consume(
+            self,
+            handler: Callable[[IncomingEvent], Awaitable[None]],
+    ) -> None:
         if not self._consumer:
-            raise RuntimeError("Consumer not started — call start() first")
+            raise RuntimeError("Консьюмер не запущен — вызовите start() сначала")
 
         async for msg in self._consumer:
-            log = logger.bind(
+            bound_log = log.bind(
                 topic=msg.topic,
                 partition=msg.partition,
                 offset=msg.offset,
             )
+            bound_log.debug("kafka_message_received")
+
             try:
-                event = IncomingEvent(**msg.value)
-                log.info("kafka_message_received", document_id=event.id)
+                event = IncomingEvent.model_validate(msg.value)
+            except (ValidationError, KeyError, TypeError) as exc:
+                bound_log.warning(
+                    "kafka_message_invalid",
+                    error=str(exc),
+                    raw_value=repr(msg.value)[:200],
+                )
+                await self._consumer.commit()
+                continue
+
+            bound_log = bound_log.bind(document_id=event.id)
+            bound_log.info("kafka_event_parsed", document_id=event.id)
+
+            try:
                 await handler(event)
                 await self._consumer.commit()
-                log.info("kafka_offset_committed", document_id=event.id)
+                bound_log.info("kafka_offset_committed", document_id=event.id)
             except Exception:
-                log.exception("kafka_message_processing_error")
-                # Offset НЕ коммитится — при рестарте сообщение будет //todo сделать, чтобы сообщения коммитились??
-                # прочитано повторно (At-Least-Once).
+                bound_log.exception("kafka_handler_failed")
                 raise

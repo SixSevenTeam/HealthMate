@@ -3,19 +3,18 @@ import sys
 
 import structlog
 
-from config import settings
+from docparser.core import settings
 
+"""Настройка structlog + стандартного logging.
 
+В production (log_format=json).
+В разработке (log_format=console).
+"""
 def setup_logging() -> None:
-    """Настройка structlog + стандартного logging.
 
-    В production (log_format=json) — машиночитаемый JSON.
-    В разработке (log_format=console) — цветной human-readable вывод.
-    """
 
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
-    # Общие процессоры
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
@@ -55,6 +54,5 @@ def setup_logging() -> None:
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level)
 
-    # Уменьшаем шум от библиотек
     logging.getLogger("aiokafka").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
