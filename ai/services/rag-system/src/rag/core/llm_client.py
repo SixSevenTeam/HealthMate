@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import AsyncIterator
 
 import structlog
+from openai import AsyncOpenAI
 
 log = structlog.get_logger()
 
@@ -32,7 +33,11 @@ class LLMClient:
         self._api_key = api_key
         self._base_url = base_url
         self._model = model
-        self._client = None  # TODO: инициализировать openai.AsyncOpenAI
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
+        log.info("llm_client_initialized", model=model, base_url=base_url)
 
     async def chat(
         self,
@@ -55,9 +60,26 @@ class LLMClient:
         Raises:
             RuntimeError: При ошибке API или таймауте.
         """
-        # TODO: реализовать через openai.AsyncOpenAI с base_url и api_key
-        log.warning("llm_client_not_implemented", model=self._model)
-        pass
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=full_messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            log.info(
+                "llm_chat_complete",
+                model=self._model,
+                input_msgs=len(messages),
+                output_len=len(content),
+            )
+            return content
+        except Exception as e:
+            log.error("llm_chat_failed", model=self._model, error=str(e))
+            raise RuntimeError(f"LLM API error: {e}") from e
 
     async def chat_stream(
         self,
@@ -75,10 +97,22 @@ class LLMClient:
         Yields:
             Фрагменты текста по мере получения от API.
         """
-        # TODO: реализовать через openai.AsyncOpenAI с stream=True
-        log.warning("llm_client_stream_not_implemented")
-        return
-        yield  # делает функцию генератором
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+        try:
+            stream = await self._client.chat.completions.create(
+                model=self._model,
+                messages=full_messages,
+                temperature=temperature,
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield delta.content
+        except Exception as e:
+            log.error("llm_stream_failed", model=self._model, error=str(e))
+            raise RuntimeError(f"LLM stream error: {e}") from e
 
 
 _llm_client: LLMClient | None = None

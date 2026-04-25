@@ -14,7 +14,7 @@ import structlog
 import uvicorn
 from fastapi import FastAPI
 
-from rag.api.router import api_router
+from rag.api.router import api_router, chat_router
 from rag.application.document_processor import DocumentProcessor
 from rag.core.config import settings
 from rag.core.logger import setup_logging
@@ -35,6 +35,7 @@ app = FastAPI(
 )
 
 app.include_router(api_router)
+app.include_router(chat_router)
 
 
 @app.get("/health", tags=["Служебные"])

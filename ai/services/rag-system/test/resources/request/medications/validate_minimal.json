@@ -1,0 +1,5 @@
+{
+  "userId": "u1",
+  "userContext": {"userId": "u1"},
+  "candidateMedication": {"customName": "test"}
+}

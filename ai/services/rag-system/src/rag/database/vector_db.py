@@ -6,10 +6,13 @@ Qdrant хранит эмбеддинги чанков документов и о
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
 
 log = structlog.get_logger()
 
@@ -33,9 +36,14 @@ class VectorStore:
     (document_id, chunk_index, section_path и т.п.).
     """
 
-    def __init__(self) -> None:
-        self._client = None  # TODO: qdrant_client.AsyncQdrantClient(url=...)
-        log.info("vector_store_initialized", status="stub")
+    def __init__(self, url: str | None = None, api_key: str | None = None) -> None:
+        from rag.core.config import settings
+        self._client = AsyncQdrantClient(
+            url=url or settings.qdrant_url,
+            api_key=api_key or settings.qdrant_api_key,
+            timeout=settings.qdrant_timeout,
+        )
+        log.info("vector_store_initialized", url=url or settings.qdrant_url)
 
     async def create_collection_if_not_exists(
         self, collection: str, dimension: int
@@ -46,11 +54,17 @@ class VectorStore:
             collection: Имя коллекции.
             dimension: Размерность векторов (должна совпадать с моделью эмбеддингов).
         """
-        # TODO: self._client.create_collection(
-        #   collection_name=collection,
-        #   vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
-        # )
-        log.warning("create_collection_not_implemented", collection=collection)
+        collections = await self._client.get_collections()
+        existing_names = [c.name for c in collections.collections]
+
+        if collection not in existing_names:
+            await self._client.create_collection(
+                collection_name=collection,
+                vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
+            )
+            log.info("qdrant_collection_created", collection=collection, dimension=dimension)
+        else:
+            log.debug("qdrant_collection_exists", collection=collection)
 
     async def insert_vectors(
         self,
@@ -67,15 +81,20 @@ class VectorStore:
             texts: Исходные тексты чанков.
             metadata: Метаданные (document_id, chunk_index, section_path).
         """
-        # TODO: self._client.upsert(
-        #   collection_name=collection,
-        #   points=[PointStruct(id=..., vector=emb, payload={"text": t, **m})]
-        # )
-        log.warning(
-            "insert_vectors_not_implemented",
-            collection=collection,
-            count=len(embeddings),
+        points = [
+            PointStruct(
+                id=str(uuid.uuid4()),
+                vector=emb,
+                payload={"text": text, **meta},
+            )
+            for emb, text, meta in zip(embeddings, texts, metadata)
+        ]
+
+        await self._client.upsert(
+            collection_name=collection,
+            points=points,
         )
+        log.info("vectors_inserted", collection=collection, count=len(points))
 
     async def search(
         self,
@@ -95,14 +114,28 @@ class VectorStore:
         Returns:
             Список найденных чанков, отсортированных по убыванию релевантности.
         """
-        # TODO: self._client.search(
-        #   collection_name=collection,
-        #   query_vector=query_vector,
-        #   limit=top_k,
-        #   score_threshold=score_threshold,
-        # )
-        log.warning("search_not_implemented", collection=collection, top_k=top_k)
-        return []
+        results = await self._client.search(
+            collection_name=collection,
+            query_vector=query_vector,
+            limit=top_k,
+            score_threshold=score_threshold,
+        )
+
+        search_results = []
+        for hit in results:
+            payload = hit.payload or {}
+            search_results.append(
+                SearchResult(
+                    chunk_id=str(hit.id),
+                    document_id=payload.get("document_id", ""),
+                    text=payload.get("text", ""),
+                    score=hit.score,
+                    metadata={k: v for k, v in payload.items() if k != "text"},
+                )
+            )
+
+        log.info("search_complete", collection=collection, results=len(search_results))
+        return search_results
 
 
 _vector_store: VectorStore | None = None

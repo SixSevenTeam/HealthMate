@@ -8,11 +8,28 @@
 
 from __future__ import annotations
 
+import time
+import uuid
+
 import structlog
 
+from rag.core.config import settings
+from rag.core.llm_client import get_llm_client
+from rag.dialogue.prompts import (
+    ANAMNESIS_SYSTEM_PROMPT,
+    MEDICAL_DISCLAIMER,
+    RECOMMENDATION_SYSTEM_PROMPT,
+    SYNTHESIS_SYSTEM_PROMPT,
+)
 from rag.dialogue.session import Session, SessionManager, get_session_manager
 from rag.dialogue.stages import ConsultationStage
-from rag.domain.events import QueryRequest, QueryResponse
+from rag.domain.events import (
+    ContextUsed,
+    QueryRequest,
+    QueryResponse,
+    ResponseMetadata,
+    RetrievedDocument,
+)
 
 log = structlog.get_logger()
 
@@ -70,14 +87,19 @@ class DialogueService:
             session: Текущее состояние сессии.
             request: Входящий запрос.
         """
-        # TODO:
-        # from rag.core.config import settings
-        # if session.questions_asked >= settings.max_clarifying_questions:
-        #     if not session.clinical_summary:
-        #         return ConsultationStage.SYNTHESIS
-        #     return ConsultationStage.RECOMMENDATION
-        # return ConsultationStage.ANAMNESIS
-        pass
+        if session.stage == ConsultationStage.RECOMMENDATION:
+            return ConsultationStage.RECOMMENDATION
+
+        if session.stage == ConsultationStage.SYNTHESIS or (
+            session.questions_asked >= settings.max_clarifying_questions
+            and not session.clinical_summary
+        ):
+            return ConsultationStage.SYNTHESIS
+
+        if session.clinical_summary:
+            return ConsultationStage.RECOMMENDATION
+
+        return ConsultationStage.ANAMNESIS
 
     async def _collect_anamnesis(
         self,
@@ -93,14 +115,45 @@ class DialogueService:
             request: Входящий запрос.
             session: Текущая сессия.
         """
-        # TODO:
-        # 1. Сформировать системный промпт с профилем пользователя
-        # 2. Вызвать llm_client.chat(request.conversation_history, system_prompt)
-        # 3. Обновить session.questions_asked += 1
-        # 4. Сохранить упомянутые симптомы в session.collected_symptoms
-        # 5. Вернуть QueryResponse со stage=anamnesis_collection
-        log.warning("collect_anamnesis_not_implemented")
-        pass
+        start = time.monotonic()
+        llm = get_llm_client()
+
+        profile_summary = self._format_profile(request)
+        system_prompt = ANAMNESIS_SYSTEM_PROMPT.format(
+            max_questions=settings.max_clarifying_questions,
+            user_profile_summary=profile_summary,
+        )
+
+        messages = [
+            {"role": m.role, "content": m.content}
+            for m in request.conversation_history
+        ]
+        messages.append({"role": "user", "content": request.query})
+
+        response_text = await llm.chat(messages, system_prompt, temperature=0.6)
+
+        session.questions_asked += 1
+        session.messages = messages + [{"role": "assistant", "content": response_text}]
+        session.stage = ConsultationStage.ANAMNESIS
+        await self._sessions.update(session)
+
+        elapsed = int((time.monotonic() - start) * 1000)
+        log.info("anamnesis_step", session_id=session.session_id, q=session.questions_asked)
+
+        return QueryResponse(
+            request_id=str(uuid.uuid4()),
+            session_id=session.session_id,
+            stage="anamnesis_collection",
+            response_type="clarifying_question",
+            content={"message": response_text, "disclaimer": MEDICAL_DISCLAIMER},
+            next_action="await_user_response",
+            metadata=ResponseMetadata(
+                processing_time_ms=elapsed,
+                llm_model=settings.llm_model,
+                questions_asked=session.questions_asked,
+                max_questions=settings.max_clarifying_questions,
+            ),
+        )
 
     async def _synthesize_context(
         self,
@@ -116,15 +169,52 @@ class DialogueService:
             request: Входящий запрос.
             session: Текущая сессия.
         """
-        # TODO:
-        # 1. medical_profile_client.get_profile(request.user_id)
-        # 2. Сформировать синтез-промпт с симптомами и профилем
-        # 3. Вызвать llm_client.chat для получения clinical_summary
-        # 4. Сохранить session.clinical_summary
-        # 5. Перевести session.stage → RECOMMENDATION
-        # 6. Вернуть QueryResponse со stage=context_synthesis
-        log.warning("synthesize_context_not_implemented")
-        pass
+        start = time.monotonic()
+        llm = get_llm_client()
+
+        profile_summary = self._format_profile(request)
+        symptoms_text = "\n".join(
+            f"- {s}" for s in session.collected_symptoms
+        ) if session.collected_symptoms else "(из диалога)"
+
+        system_prompt = SYNTHESIS_SYSTEM_PROMPT.format(
+            collected_symptoms=symptoms_text,
+            user_profile_summary=profile_summary,
+        )
+
+        messages = session.messages or [
+            {"role": m.role, "content": m.content}
+            for m in request.conversation_history
+        ]
+
+        clinical_summary = await llm.chat(
+            messages, system_prompt, temperature=0.4, max_tokens=1024,
+        )
+
+        session.clinical_summary = clinical_summary
+        session.stage = ConsultationStage.RECOMMENDATION
+        await self._sessions.update(session)
+
+        elapsed = int((time.monotonic() - start) * 1000)
+        log.info("synthesis_complete", session_id=session.session_id)
+
+        return QueryResponse(
+            request_id=str(uuid.uuid4()),
+            session_id=session.session_id,
+            stage="context_synthesis",
+            response_type="synthesis_result",
+            content={
+                "message": "Анализирую информацию и подбираю рекомендации...",
+                "clinical_summary": clinical_summary,
+                "disclaimer": MEDICAL_DISCLAIMER,
+            },
+            next_action="generate_recommendation",
+            metadata=ResponseMetadata(
+                processing_time_ms=elapsed,
+                llm_model=settings.llm_model,
+                questions_asked=session.questions_asked,
+            ),
+        )
 
     async def _generate_recommendation(
         self,
@@ -141,17 +231,102 @@ class DialogueService:
             request: Входящий запрос.
             session: Текущая сессия с clinical_summary.
         """
-        # TODO:
-        # 1. chunks = await retriever.retrieve(session.clinical_summary)
-        # 2. chunks = await reranker.rerank(query, chunks, user_context=profile)
-        # 3. safety_check = safety_checker.check_allergies(medications, allergies)
-        # 4. Сформировать рекомендационный промпт с контекстом
-        # 5. response_text = await llm_client.chat(...)
-        # 6. Добавить MEDICAL_DISCLAIMER к ответу
-        # 7. Закрыть сессию: await self._sessions.delete(request.session_id)
-        # 8. Вернуть QueryResponse со stage=recommendation
-        log.warning("generate_recommendation_not_implemented")
-        pass
+        start = time.monotonic()
+        llm = get_llm_client()
+
+        from rag.retrieval.retriever import get_retriever
+        retriever = get_retriever()
+        chunks = await retriever.retrieve(
+            session.clinical_summary or request.query,
+            top_k=settings.retrieval_top_k,
+        )
+
+        retrieved_context = "\n\n---\n\n".join(
+            f"[{c.metadata.get('section_path', [])}]\n{c.text}"
+            for c in chunks
+        ) if chunks else "(медицинские материалы не найдены)"
+
+        profile_summary = self._format_profile(request)
+
+        system_prompt = RECOMMENDATION_SYSTEM_PROMPT.format(
+            clinical_summary=session.clinical_summary or "не определена",
+            retrieved_context=retrieved_context,
+            user_profile_summary=profile_summary,
+        )
+
+        messages = session.messages or [
+            {"role": m.role, "content": m.content}
+            for m in request.conversation_history
+        ]
+
+        response_text = await llm.chat(
+            messages, system_prompt, temperature=0.5, max_tokens=2048,
+        )
+
+        from rag.medical.safety_checker import SafetyChecker
+        safety = SafetyChecker()
+        safety_warnings = safety.check_allergies(
+            response_text,
+            request.user_profile.allergies,
+        )
+
+        final_text = response_text + MEDICAL_DISCLAIMER
+
+        await self._sessions.delete(session.session_id)
+
+        elapsed = int((time.monotonic() - start) * 1000)
+        log.info("recommendation_generated", session_id=session.session_id)
+
+        return QueryResponse(
+            request_id=str(uuid.uuid4()),
+            session_id=session.session_id,
+            stage="recommendation",
+            response_type="medical_recommendation",
+            content={
+                "message": final_text,
+                "disclaimer": MEDICAL_DISCLAIMER,
+            },
+            context_used=ContextUsed(
+                retrieved_documents=[
+                    RetrievedDocument(
+                        document_id=c.document_id,
+                        chunk_id=c.chunk_id,
+                        relevance_score=c.score,
+                        snippet=c.text[:200],
+                    )
+                    for c in chunks
+                ],
+                user_constraints_applied=[
+                    f"allergy:{a}" for a in request.user_profile.allergies
+                ],
+                safety_checks_performed=safety_warnings or ["no_issues_found"],
+            ),
+            next_action="session_complete",
+            metadata=ResponseMetadata(
+                processing_time_ms=elapsed,
+                llm_model=settings.llm_model,
+                questions_asked=session.questions_asked,
+            ),
+        )
+
+    @staticmethod
+    def _format_profile(request: QueryRequest) -> str:
+        """Formats user profile into a summary string for LLM prompts."""
+        p = request.user_profile
+        parts = []
+        if p.age:
+            parts.append(f"Возраст: {p.age}")
+        if p.gender:
+            parts.append(f"Пол: {p.gender}")
+        if p.allergies:
+            parts.append(f"Аллергии: {', '.join(p.allergies)}")
+        if p.chronic_conditions:
+            conds = [c.name for c in p.chronic_conditions]
+            parts.append(f"Хронические заболевания: {', '.join(conds)}")
+        if p.current_medications:
+            meds = [f"{m.name} ({m.dosage})" for m in p.current_medications]
+            parts.append(f"Текущие препараты: {', '.join(meds)}")
+        return "\n".join(parts) if parts else "Профиль не указан"
 
 
 _dialogue_service: DialogueService | None = None

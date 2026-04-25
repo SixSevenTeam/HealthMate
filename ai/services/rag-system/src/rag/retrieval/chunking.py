@@ -63,10 +63,15 @@ class ChunkingService:
         Returns:
             Список чанков, готовых к эмбеддингу.
         """
-        # TODO: вызвать _traverse_tree(json_data, path=[]),
-        #       затем _add_overlap(chunks)
-        log.warning("chunk_document_not_implemented")
-        pass
+        raw_chunks = self._traverse_tree(json_data, path=[])
+        merged = self._merge_small_chunks(raw_chunks)
+        final = self._add_overlap(merged)
+
+        for i, chunk in enumerate(final):
+            chunk.chunk_index = i
+
+        log.info("chunking_complete", raw=len(raw_chunks), merged=len(merged), final=len(final))
+        return final
 
     def _traverse_tree(
         self,
@@ -82,11 +87,21 @@ class ChunkingService:
         Returns:
             Список чанков из данного поддерева.
         """
-        # TODO:
-        # 1. Если node["content"] непустой → _split_by_size(content, path)
-        # 2. Рекурсивно обойти node["children"]
-        # 3. Объединить маленькие соседние чанки
-        pass
+        chunks: list[Chunk] = []
+        heading = node.get("heading", {})
+        title = heading.get("title", "")
+        page = heading.get("page_starts_at")
+
+        current_path = path + [title] if title and title != "Document Root" else list(path)
+
+        content = (node.get("content") or "").strip()
+        if content:
+            chunks.extend(self._split_by_size(content, current_path, page))
+
+        for child in node.get("children", []):
+            chunks.extend(self._traverse_tree(child, current_path))
+
+        return chunks
 
     def _split_by_size(
         self,
@@ -104,9 +119,77 @@ class ChunkingService:
         Returns:
             Список чанков из данного текста.
         """
-        # TODO: разбивать по \n\n (абзацы), накапливая chunk_size символов,
-        #       добавлять chunk_overlap символов из предыдущего чанка
-        pass
+        if len(text) <= self.chunk_size:
+            return [
+                Chunk(
+                    text=text,
+                    metadata={"section_path": list(path)},
+                    chunk_index=0,
+                    section_path=list(path),
+                    page_starts_at=page_starts_at,
+                )
+            ]
+
+        paragraphs = text.split("\n\n")
+        chunks: list[Chunk] = []
+        current_text = ""
+
+        for para in paragraphs:
+            candidate = (current_text + "\n\n" + para).strip() if current_text else para.strip()
+
+            if len(candidate) > self.chunk_size and current_text:
+                chunks.append(
+                    Chunk(
+                        text=current_text.strip(),
+                        metadata={"section_path": list(path)},
+                        chunk_index=0,
+                        section_path=list(path),
+                        page_starts_at=page_starts_at,
+                    )
+                )
+                current_text = para.strip()
+            else:
+                current_text = candidate
+
+        if current_text.strip():
+            chunks.append(
+                Chunk(
+                    text=current_text.strip(),
+                    metadata={"section_path": list(path)},
+                    chunk_index=0,
+                    section_path=list(path),
+                    page_starts_at=page_starts_at,
+                )
+            )
+
+        return chunks
+
+    def _merge_small_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
+        """Объединяет слишком маленькие соседние чанки.
+
+        Если чанк меньше min_chunk_size, присоединяет его к предыдущему.
+
+        Args:
+            chunks: Список чанков до объединения.
+
+        Returns:
+            Список чанков после объединения маленьких.
+        """
+        if not chunks:
+            return []
+
+        merged: list[Chunk] = [chunks[0]]
+
+        for chunk in chunks[1:]:
+            prev = merged[-1]
+            if len(prev.text) < self.min_chunk_size:
+                prev.text = prev.text + "\n\n" + chunk.text
+                if chunk.section_path and chunk.section_path != prev.section_path:
+                    prev.metadata["section_path"] = prev.section_path
+            else:
+                merged.append(chunk)
+
+        return merged
 
     def _add_overlap(self, chunks: list[Chunk]) -> list[Chunk]:
         """Добавляет перекрытие между соседними чанками.
@@ -120,8 +203,16 @@ class ChunkingService:
         Returns:
             Список чанков с добавленным перекрытием.
         """
-        # TODO: для каждого chunks[i] добавить chunks[i+1].text[:chunk_overlap]
-        pass
+        if len(chunks) <= 1:
+            return chunks
+
+        for i in range(len(chunks) - 1):
+            next_text = chunks[i + 1].text
+            overlap_text = next_text[: self.chunk_overlap]
+            if overlap_text:
+                chunks[i].text = chunks[i].text + "\n...\n" + overlap_text
+
+        return chunks
 
 
 _chunking_service: ChunkingService | None = None

@@ -31,10 +31,12 @@ class DocumentProcessor:
     async def process_document(self, event: Dict[str, Any]) -> None:
         await self._ensure_producer_started()
 
-        document_id = event["document_id"]
-        s3_url = event["s3_url"]
+        document_id = event.get("document_id", "")
+        result_bucket = event.get("result_bucket", "")
+        result_file = event.get("result_file", "")
+        s3_url = f"s3://{result_bucket}/{result_file}" if result_bucket else event.get("s3_url", "")
 
-        logger.info("processing_document_started", document_id=document_id)
+        logger.info("processing_document_started", document_id=document_id, s3_url=s3_url)
 
         try:
             """
@@ -57,6 +59,7 @@ class DocumentProcessor:
             logger.info("embeddings_generated", count=len(embeddings))
 
             vector_store = await get_vector_store()
+            collection = settings.qdrant_collection_name
             metadata = [
                 {
                     "document_id": document_id,
@@ -65,7 +68,7 @@ class DocumentProcessor:
                 }
                 for chunk in chunks
             ]
-            await vector_store.insert_vectors(embeddings, texts, metadata)
+            await vector_store.insert_vectors(collection, embeddings, texts, metadata)
             logger.info("vectors_stored", count=len(embeddings))
 
             await self.status_producer.send_status(

@@ -1,0 +1,162 @@
+@startuml package_structure
+!theme plain
+skinparam packageStyle rectangle
+skinparam defaultFontSize 11
+
+title HealthMate RAG System — Структура пакетов
+
+package "src/" {
+
+    package "main.py" as main <<Entry Point>> {
+    }
+
+    package "rag" {
+
+        package "api" {
+            class "router.py" as router <<Router>> {
+                api_router
+                chat_router
+            }
+            class "deps.py" as deps <<DI>> {
+                get_dialogue_service_dep()
+            }
+            package "endpoints" {
+                class "chat.py" as chat <<Endpoint>> {
+                    POST /ai/chat
+                    _to_query_request()
+                }
+                class "query.py" as query <<Endpoint>> {
+                    POST /api/v1/query
+                    handle_query()
+                }
+                class "documents.py" as docs <<Endpoint>> {
+                    POST /api/v1/documents
+                }
+            }
+        }
+
+        package "application" {
+            class "document_processor.py" as docproc <<Service>> {
+                process_document()
+                _ensure_producer_started()
+            }
+        }
+
+        package "core" {
+            class "config.py" as config <<Config>> {
+                Settings
+                get_settings()
+            }
+            class "embeddings.py" as emb <<Service>> {
+                EmbeddingService
+                embed_text()
+                embed_batch()
+            }
+            class "llm_client.py" as llmclient <<Client>> {
+                LLMClient
+                chat()
+                chat_stream()
+            }
+            class "logger.py" as logger <<Util>> {
+                setup_logging()
+            }
+        }
+
+        package "database" {
+            class "vector_db.py" as vdb <<Repository>> {
+                VectorStore
+                SearchResult
+                create_collection_if_not_exists()
+                insert_vectors()
+                search()
+            }
+        }
+
+        package "dialogue" {
+            class "service.py" as dlg_svc <<Service>> {
+                DialogueService
+                process_query()
+                _collect_anamnesis()
+                _synthesize_context()
+                _generate_recommendation()
+            }
+            class "session.py" as sess <<Repository>> {
+                Session
+                SessionManager
+                get_or_create()
+                update()
+                delete()
+            }
+            class "stages.py" as stages <<Enum>> {
+                ConsultationStage
+                ANAMNESIS
+                SYNTHESIS
+                RECOMMENDATION
+            }
+            class "prompts.py" as prm <<Const>> {
+                ANAMNESIS_SYSTEM_PROMPT
+                SYNTHESIS_SYSTEM_PROMPT
+                RECOMMENDATION_SYSTEM_PROMPT
+            }
+        }
+
+        package "domain" {
+            class "events.py" as events <<DTO>> {
+                DocumentParsedEvent
+                DocumentStatusEvent
+                QueryRequest
+                QueryResponse
+                UserProfile
+                Medication
+            }
+        }
+
+        package "infrastructure" {
+            package "kafka" {
+                class "consumer.py" as kcons <<Consumer>> {
+                    DocumentEmbeddingConsumer
+                    consume_loop()
+                }
+                class "producer.py" as kprod <<Producer>> {
+                    StatusProducer
+                    send_status()
+                }
+            }
+            package "minio" {
+                class "storage.py" as mstor <<Client>> {
+                    MinioClient
+                    download_json()
+                }
+            }
+        }
+
+        package "medical" {
+            class "safety_checker.py" as safeck <<Service>> {
+                SafetyChecker
+                check_allergies()
+                check_drug_interactions()
+                check_chronic_conditions()
+            }
+            class "disclaimer.py" as discl <<Util>> {
+                MEDICAL_DISCLAIMER
+                inject_disclaimer()
+            }
+        }
+
+        package "retrieval" {
+            class "chunking.py" as chunk <<Service>> {
+                ChunkingService
+                Chunk
+                chunk_document()
+            }
+            class "retriever.py" as retr <<Service>> {
+                HybridRetriever
+                RetrievedChunk
+                retrieve()
+                _dense_search()
+            }
+        }
+    }
+}
+
+@enduml

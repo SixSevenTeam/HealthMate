@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -76,7 +76,7 @@ class DocumentStatusEvent(BaseModel):
     status: str = Field(..., description="processing | embedded | partially_embedded | failed")
     details: dict[str, Any] | None = None
     error: dict[str, str] | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict[str, Any]:
         """Сериализует событие для отправки в Kafka."""

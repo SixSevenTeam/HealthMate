@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import structlog
+from sentence_transformers import SentenceTransformer
 
 log = structlog.get_logger()
 
@@ -27,8 +30,16 @@ class EmbeddingService:
         """
         self._model_name = model_name
         self._dimension = dimension
-        self._model = None  # TODO: загрузить SentenceTransformer(model_name)
+        self._model: SentenceTransformer | None = None
         log.info("embedding_service_initialized", model=model_name, dimension=dimension)
+
+    def _load_model(self) -> SentenceTransformer:
+        """Lazy-load модели при первом вызове."""
+        if self._model is None:
+            log.info("loading_embedding_model", model=self._model_name)
+            self._model = SentenceTransformer(self._model_name)
+            log.info("embedding_model_loaded", model=self._model_name)
+        return self._model
 
     async def embed_text(self, text: str) -> list[float]:
         """Генерирует эмбеддинг для одного текста.
@@ -39,9 +50,9 @@ class EmbeddingService:
         Returns:
             Вектор вещественных чисел длиной self._dimension.
         """
-        # TODO: asyncio.to_thread(self._model.encode, text)
-        log.warning("embed_text_not_implemented", model=self._model_name)
-        pass
+        model = self._load_model()
+        embedding = await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
+        return embedding.tolist()
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Батчевая генерация эмбеддингов для повышения производительности.
@@ -52,9 +63,11 @@ class EmbeddingService:
         Returns:
             Список векторов длиной self._dimension.
         """
-        # TODO: asyncio.to_thread(self._model.encode, texts, batch_size=32)
-        log.warning("embed_batch_not_implemented", count=len(texts))
-        pass
+        model = self._load_model()
+        embeddings = await asyncio.to_thread(
+            model.encode, texts, batch_size=32, normalize_embeddings=True,
+        )
+        return [emb.tolist() for emb in embeddings]
 
 
 _embedding_service: EmbeddingService | None = None

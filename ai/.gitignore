@@ -2,6 +2,7 @@
 **/.env
 **/.env.*
 !**/.env.example
+services/docs
 
 # Python
 **/__pycache__/
@@ -68,3 +69,6 @@
 
 # Alembic
 **/alembic/versions/*.pyc
+
+# Internal working notes
+**/docs/internal/
