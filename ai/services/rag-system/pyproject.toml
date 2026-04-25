@@ -54,6 +54,7 @@ dev = [
     "ruff>=0.3.0",
     "mypy>=1.9.0",
     "httpx>=0.27.0",  # Для тестирования API
+    "fakeredis[aioredis]>=2.21.0",  # In-process Redis для интеграционных тестов
 ]
 
 [tool.setuptools.packages.find]
@@ -76,7 +77,19 @@ plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["test/python"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+addopts = ""
+# Coverage: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
+
+[tool.coverage.run]
+omit = [
+    "src/main.py",
+    "src/rag/core/logger.py",
+    "src/rag/medical/profile_client.py",
+    "src/rag/retrieval/reranker.py",
+    "src/rag/api/endpoints/documents.py",
+    "src/rag/*/__init__.py",
+]

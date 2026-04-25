@@ -1,0 +1,53 @@
+@startuml document_processing
+!theme plain
+skinparam defaultFontSize 12
+skinparam sequenceMessageAlign center
+
+title HealthMate RAG System — Обработка документов (Document Pipeline)
+
+participant "document-parser" as parser
+queue "Kafka\njson-outgoing" as kafka_in
+participant "DocumentEmbeddingConsumer" as consumer
+participant "DocumentProcessor" as processor
+participant "MinioClient" as minio
+storage "MinIO\n(S3)" as s3
+participant "ChunkingService" as chunker
+participant "EmbeddingService" as embed
+participant "VectorStore" as vstore
+database "Qdrant" as qdrant
+participant "StatusProducer" as status_prod
+queue "Kafka\ndocument.status" as kafka_out
+participant "Java Backend" as java
+
+parser -> kafka_in : DocumentParsedEvent\n{document_id, s3_url, metadata}
+
+kafka_in -> consumer : consume message
+consumer -> processor : process_document(event)
+
+processor -> minio : download_json(s3_url)
+minio -> s3 : fget_object(bucket, key)
+s3 --> minio : JSON file
+minio --> processor : dict (JSON tree)
+
+processor -> chunker : chunk_document(json_tree)
+note right of chunker
+  1. traverse_tree — обход дерева
+  2. split_by_size — разбиение по размеру
+  3. merge_small_chunks — объединение мелких
+  4. add_overlap — перекрытие чанков
+end note
+chunker --> processor : Chunk[]
+
+processor -> embed : embed_batch(texts)
+embed --> processor : float[][] (vectors)
+
+processor -> vstore : insert_vectors(collection,\nembeddings, texts, metadata)
+vstore -> qdrant : upsert(points)
+qdrant --> vstore : ok
+
+processor -> status_prod : send_status(document_id,\n"embedded", details)
+status_prod -> kafka_out : DocumentStatusEvent
+
+kafka_out -> java : Статус обработки
+
+@enduml

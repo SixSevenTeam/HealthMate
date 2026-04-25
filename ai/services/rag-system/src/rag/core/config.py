@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
 
-    deepseek_api_key: str = Field(default=False)
+    deepseek_api_key: str = Field(default="")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1")
     llm_model: str = Field(default="deepseek-chat")
     llm_temperature: float = Field(default=0.7)
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     embedding_provider: Literal["openai", "cohere", "huggingface"] = Field(
         default="openai"
     )
-    openai_api_key: str = Field(default=False)
+    openai_api_key: str = Field(default="")
     embedding_model: str = Field(default="deepvk/USER-bge-m3")
     embedding_dimension: int = Field(default=1024)
 
@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     hybrid_search_weight_lexical: float = Field(default=0.3)
 
     # Chunking
+
+    embedding_batch_size: int = Field(default=100)
 
     chunk_size: int = Field(default=512)
     chunk_overlap: int = Field(default=128)

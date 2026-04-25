@@ -1,0 +1,5 @@
+{
+  "id": "doc-integration-test",
+  "minIoBucket": "raw-documents",
+  "filePath": "paracetamol.htm"
+}

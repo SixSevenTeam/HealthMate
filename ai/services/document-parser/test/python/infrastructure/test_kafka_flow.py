@@ -11,6 +11,13 @@ from pydantic import ValidationError
 from docparser.domain import IncomingEvent, OutgoingEvent
 from docparser.infrastructure.kafka.consumer import KafkaEventConsumer
 from docparser.infrastructure.kafka.producer import KafkaEventProducer
+from test.resources import load_json
+
+
+async def _async_iter(items):
+    """Вспомогательный async-генератор для мока __aiter__."""
+    for item in items:
+        yield item
 
 
 # ── KafkaEventConsumer ────────────────────────────────────────────────────────
@@ -24,14 +31,10 @@ async def test_consume_calls_handler_with_parsed_event():
     mock_msg.topic = "test-topic"
     mock_msg.partition = 0
     mock_msg.offset = 0
-    mock_msg.value = {
-        "id": "doc-1",
-        "minIoBucket": "bucket",
-        "filePath": "file.htm",
-    }
+    mock_msg.value = load_json("request/kafka/incoming_event.json")
 
     mock_kafka = AsyncMock()
-    mock_kafka.__aiter__ = MagicMock(return_value=iter([mock_msg]))
+    mock_kafka.__aiter__ = lambda self: _async_iter([mock_msg])
     mock_kafka.commit = AsyncMock()
 
     consumer._consumer = mock_kafka
@@ -41,7 +44,6 @@ async def test_consume_calls_handler_with_parsed_event():
     async def handler(event: IncomingEvent):
         received_events.append(event)
 
-    # Запускаем один итерационный цикл через __aiter__
     async for msg in mock_kafka:
         event = IncomingEvent.model_validate(msg.value)
         await handler(event)
@@ -67,11 +69,7 @@ async def test_consumer_commits_offset_after_success():
     mock_msg.topic = "t"
     mock_msg.partition = 0
     mock_msg.offset = 5
-    mock_msg.value = {
-        "id": "doc-commit-test",
-        "minIoBucket": "b",
-        "filePath": "f.htm",
-    }
+    mock_msg.value = load_json("request/kafka/incoming_event_commit.json")
 
     commit_called = False
 
@@ -79,15 +77,14 @@ async def test_consumer_commits_offset_after_success():
         nonlocal commit_called
         commit_called = True
 
-    mock_kafka = MagicMock()
-    mock_kafka.__aiter__ = MagicMock(return_value=iter([mock_msg]))
+    mock_kafka = AsyncMock()
+    mock_kafka.__aiter__ = lambda self: _async_iter([mock_msg])
     mock_kafka.commit = AsyncMock(side_effect=fake_commit)
     consumer._consumer = mock_kafka
 
-    # Симулируем один цикл консьюмера вручную
     async for msg in mock_kafka:
         event = IncomingEvent.model_validate(msg.value)
-        await AsyncMock()(event)  # handler-заглушка
+        await AsyncMock()(event)
         await mock_kafka.commit()
         break
 

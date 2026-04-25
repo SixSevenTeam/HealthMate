@@ -35,6 +35,57 @@ class SafetyChecker:
     исключаются из рекомендаций или помечаются явным предупреждением.
     """
 
+    _SYNONYM_GROUPS: list[set[str]] = [
+        {"аспирин", "ацетилсалициловая кислота", "аск"},
+        {"парацетамол", "ацетаминофен"},
+        {"ибупрофен", "нурофен"},
+        {"диклофенак", "вольтарен"},
+        {"омепразол", "омез"},
+        {"амоксициллин", "амоксиклав", "аугментин"},
+        {"пенициллин", "амоксициллин", "ампициллин"},
+    ]
+
+    _INTERACTION_PAIRS: dict[frozenset[str], dict] = {
+        frozenset({"варфарин", "аспирин"}): {
+            "reason": "Повышенный риск кровотечения", "severity": "high",
+        },
+        frozenset({"метотрексат", "ибупрофен"}): {
+            "reason": "Повышение токсичности метотрексата", "severity": "high",
+        },
+        frozenset({"литий", "ибупрофен"}): {
+            "reason": "Повышение концентрации лития", "severity": "high",
+        },
+        frozenset({"метформин", "алкоголь"}): {
+            "reason": "Риск лактоацидоза", "severity": "medium",
+        },
+        frozenset({"антибиотик", "антацид"}): {
+            "reason": "Снижение всасывания антибиотика", "severity": "medium",
+        },
+    }
+
+    _CONDITION_CONTRAINDICATIONS: dict[tuple[str, str], dict] = {
+        ("ибупрофен", "язвенная болезнь"): {
+            "reason": "НПВС противопоказаны при язвенной болезни", "severity": "high",
+        },
+        ("аспирин", "язвенная болезнь"): {
+            "reason": "Аспирин противопоказан при язвенной болезни", "severity": "high",
+        },
+        ("метформин", "почечная недостаточность"): {
+            "reason": "Метформин противопоказан при почечной недостаточности", "severity": "high",
+        },
+        ("бета-блокатор", "бронхиальная астма"): {
+            "reason": "Бета-блокаторы могут ухудшить течение астмы", "severity": "high",
+        },
+    }
+
+    @staticmethod
+    def _is_synonym(med: str, allergen: str) -> bool:
+        """Проверяет, являются ли препарат и аллерген синонимами."""
+        for group in SafetyChecker._SYNONYM_GROUPS:
+            if med in group and allergen in group:
+                return True
+        return False
+
     def check_allergies(
         self,
         medications: list[str],
@@ -52,13 +103,33 @@ class SafetyChecker:
         Returns:
             Список предупреждений для опасных сочетаний.
         """
-        # TODO:
-        # for med in medications:
-        #   for allergen in allergies:
-        #     if normalize(med) == normalize(allergen) or is_synonym(med, allergen):
-        #       warnings.append(SafetyWarning(..., severity="high"))
-        log.warning("check_allergies_not_implemented")
-        pass
+        warnings: list[SafetyWarning] = []
+        norm_allergies = [a.lower().strip() for a in allergies]
+
+        if isinstance(medications, str):
+            medications = [medications]
+
+        for med in medications:
+            med_lower = med.lower().strip()
+            for allergen in norm_allergies:
+                if allergen in med_lower or med_lower in allergen:
+                    warnings.append(SafetyWarning(
+                        type="contraindication_allergy",
+                        medication=med,
+                        reason=f"Аллергия на {allergen}",
+                        severity="high",
+                    ))
+                elif self._is_synonym(med_lower, allergen):
+                    warnings.append(SafetyWarning(
+                        type="contraindication_allergy",
+                        medication=med,
+                        reason=f"Аллергия на {allergen} (синоним/группа)",
+                        severity="high",
+                    ))
+
+        if warnings:
+            log.warning("allergy_warnings_found", count=len(warnings))
+        return warnings
 
     def check_drug_interactions(
         self,
@@ -74,10 +145,26 @@ class SafetyChecker:
         Returns:
             Список предупреждений об опасных взаимодействиях.
         """
-        # TODO: использовать базу взаимодействий (drugbank или подобную)
-        # Простейший вариант: hardcoded пары известных взаимодействий
-        log.warning("check_drug_interactions_not_implemented")
-        pass
+        warnings: list[SafetyWarning] = []
+
+        current_names = [m.name.lower().strip() for m in current_medications]
+
+        for new_med in new_medications:
+            new_lower = new_med.lower().strip()
+            for cur_name in current_names:
+                pair = frozenset({new_lower, cur_name})
+                if pair in self._INTERACTION_PAIRS:
+                    info = self._INTERACTION_PAIRS[pair]
+                    warnings.append(SafetyWarning(
+                        type="drug_interaction",
+                        medication=new_med,
+                        reason=info["reason"],
+                        severity=info["severity"],
+                    ))
+
+        if warnings:
+            log.warning("drug_interaction_warnings", count=len(warnings))
+        return warnings
 
     def check_chronic_conditions(
         self,
@@ -92,9 +179,25 @@ class SafetyChecker:
             medications: Список рекомендуемых препаратов.
             conditions: Список хронических диагнозов пользователя.
         """
-        # TODO: база противопоказаний по нозологиям
-        log.warning("check_chronic_conditions_not_implemented")
-        pass
+        warnings: list[SafetyWarning] = []
+        norm_conditions = [c.lower().strip() for c in conditions]
+
+        for med in medications:
+            med_lower = med.lower().strip()
+            for cond in norm_conditions:
+                pair = (med_lower, cond)
+                if pair in self._CONDITION_CONTRAINDICATIONS:
+                    info = self._CONDITION_CONTRAINDICATIONS[pair]
+                    warnings.append(SafetyWarning(
+                        type="chronic_condition",
+                        medication=med,
+                        reason=info["reason"],
+                        severity=info["severity"],
+                    ))
+
+        if warnings:
+            log.warning("chronic_condition_warnings", count=len(warnings))
+        return warnings
 
 
 _safety_checker: SafetyChecker | None = None

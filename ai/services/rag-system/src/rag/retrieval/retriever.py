@@ -67,14 +67,18 @@ class HybridRetriever:
         Returns:
             Список чанков, отсортированных по убыванию релевантности.
         """
-        # TODO:
-        # 1. query_vector = await embedding_service.embed_text(query)
-        # 2. dense_results = await self._dense_search(query_vector, top_k * 2)
-        # 3. sparse_results = self._sparse_search(query, top_k * 2)
-        # 4. merged = self._merge_results(dense_results, sparse_results)
-        # 5. return merged[:top_k]
-        log.warning("retrieve_not_implemented", query_len=len(query))
-        return []
+        from rag.core.embeddings import get_embedding_service
+
+        embedding_service = get_embedding_service()
+        query_vector = await embedding_service.embed_text(query)
+
+        dense_results = await self._dense_search(query_vector, top_k)
+
+        # TODO: sparse_results = self._sparse_search(query, top_k)
+        # TODO: merged = self._merge_results(dense_results, sparse_results)
+
+        log.info("retrieve_complete", query_len=len(query), results=len(dense_results))
+        return dense_results[:top_k]
 
     async def _dense_search(
         self,
@@ -87,8 +91,27 @@ class HybridRetriever:
             query_vector: Эмбеддинг запроса.
             top_k: Количество результатов.
         """
-        # TODO: vector_store.search(collection, query_vector, top_k)
-        pass
+        from rag.core.config import settings
+        from rag.database.vector_db import get_vector_store
+
+        vector_store = await get_vector_store()
+        results = await vector_store.search(
+            collection=settings.qdrant_collection_name,
+            query_vector=query_vector,
+            top_k=top_k,
+            score_threshold=settings.retrieval_similarity_threshold,
+        )
+
+        return [
+            RetrievedChunk(
+                chunk_id=r.chunk_id,
+                document_id=r.document_id,
+                text=r.text,
+                score=r.score,
+                metadata=r.metadata,
+            )
+            for r in results
+        ]
 
     def _sparse_search(
         self,
@@ -131,7 +154,7 @@ def get_retriever() -> HybridRetriever:
     if _retriever is None:
         from rag.core.config import settings
         _retriever = HybridRetriever(
-            dense_weight=settings.hybrid_dense_weight,
-            sparse_weight=settings.hybrid_sparse_weight,
+            dense_weight=settings.hybrid_search_weight_semantic,
+            sparse_weight=settings.hybrid_search_weight_lexical,
         )
     return _retriever

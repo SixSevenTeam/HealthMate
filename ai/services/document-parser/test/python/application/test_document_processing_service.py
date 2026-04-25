@@ -5,16 +5,64 @@
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from minio.error import S3Error
 
 from docparser.application import DocumentProcessingService
 from docparser.domain import IncomingEvent
+from test.resources import load_json
 
 
-# ── Фикстура сервиса ──────────────────────────────────────────────────────────
+# ── Фикстуры ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def mock_storage():
+    """AsyncMock для MinioStorage с реалистичными возвращаемыми значениями."""
+    storage = AsyncMock()
+    storage.object_exists = AsyncMock(return_value=False)
+    storage.download_file = AsyncMock(return_value=None)
+    storage.upload_json = AsyncMock(return_value=None)
+    return storage
+
+
+@pytest.fixture
+def mock_producer():
+    """AsyncMock для KafkaEventProducer."""
+    producer = AsyncMock()
+    producer.send_status = AsyncMock(return_value=None)
+    producer.send_event = AsyncMock(return_value=None)
+    return producer
+
+
+@pytest.fixture
+def mock_processor():
+    """MagicMock для Processor — возвращает один Markdown-чанк."""
+    processor = MagicMock()
+    processor.convert_to_markdown = MagicMock(
+        return_value=load_json("stub/pipeline/processor_result.json")
+    )
+    return processor
+
+
+@pytest.fixture
+def mock_tree_builder():
+    """MagicMock для MarkdownTreeBuilder — возвращает минимальное дерево."""
+    tree_builder = MagicMock()
+    tree_builder.build_tree = MagicMock(
+        return_value=load_json("stub/pipeline/tree_builder_result.json")
+    )
+    return tree_builder
+
+
+@pytest.fixture
+def sample_event() -> IncomingEvent:
+    """Валидное входящее событие в wire-формате."""
+    return IncomingEvent.model_validate(
+        load_json("request/pipeline/sample_event.json")
+    )
+
 
 @pytest.fixture
 def service(mock_storage, mock_processor, mock_tree_builder, mock_producer):

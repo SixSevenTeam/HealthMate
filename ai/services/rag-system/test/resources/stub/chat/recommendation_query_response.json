@@ -1,0 +1,10 @@
+{
+  "request_id": "r1",
+  "session_id": "s1",
+  "stage": "recommendation",
+  "response_type": "final_recommendation",
+  "content": {"message": "Recommendation text", "disclaimer": "disclaimer"},
+  "next_action": "complete",
+  "processing_time_ms": 50,
+  "llm_model": "test"
+}

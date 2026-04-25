@@ -1,0 +1,14 @@
+{
+  "conversationId": "conv-test-1",
+  "userMessage": "У меня болит голова",
+  "anamnesisState": {"stage": "collecting"},
+  "userContext": {
+    "userId": "user-test-1",
+    "allergies": [{"allergen": "аспирин", "reaction": "сыпь"}],
+    "diagnoses": [{"name": "гипертония"}],
+    "activeMedications": [
+      {"tradeName": "лизиноприл", "doseAmount": 10, "doseUnit": "мг", "instructions": "1 раз/день"}
+    ]
+  },
+  "conversationHistory": []
+}
