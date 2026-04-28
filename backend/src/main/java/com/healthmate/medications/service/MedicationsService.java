@@ -1,6 +1,5 @@
 package com.healthmate.medications.service;
 
-import com.healthmate.aigateway.service.AIGatewayService;
 import com.healthmate.medications.entity.*;
 import com.healthmate.medications.repository.*;
 import com.healthmate.exception.ResourceNotFoundException;
@@ -40,7 +39,6 @@ public class MedicationsService {
     private final UserMedicationRepository userMedicationRepository;
     private final ScheduleRepository scheduleRepository;
     private final IntakeLogRepository intakeLogRepository;
-    private final AIGatewayService aiGatewayService;
 
     @Value("${healthmate.dataset-root:dataset/healthmate_2018-2023/data}")
     private String datasetRoot;
@@ -48,13 +46,11 @@ public class MedicationsService {
     public MedicationsService(DrugRepository drugRepository, 
                               UserMedicationRepository userMedicationRepository,
                               ScheduleRepository scheduleRepository,
-                              IntakeLogRepository intakeLogRepository,
-                              AIGatewayService aiGatewayService) {
+                              IntakeLogRepository intakeLogRepository) {
         this.drugRepository = drugRepository;
         this.userMedicationRepository = userMedicationRepository;
         this.scheduleRepository = scheduleRepository;
         this.intakeLogRepository = intakeLogRepository;
-        this.aiGatewayService = aiGatewayService;
     }
 
     public List<Drug> searchDrugs(String query) {
@@ -80,7 +76,7 @@ public class MedicationsService {
             }
         }
 
-        return aiGatewayService.getDrugMedia(drugId.toString());
+        throw new ResourceNotFoundException("Drug details HTML not found");
     }
 
     public DrugImagePayload getDrugPackImagePayload(UUID drugId) {
@@ -416,9 +412,16 @@ public class MedicationsService {
         if (raw.isAbsolute()) {
             candidates.add(raw.toAbsolutePath().normalize());
         } else {
-            candidates.add(root.resolve(raw).normalize());
             candidates.add(cwd.resolve(raw).normalize());
-            candidates.add(cwd.resolve("..").resolve(raw).normalize());
+
+            Path current = cwd.getParent();
+            while (current != null) {
+                candidates.add(current.resolve(raw).normalize());
+                current = current.getParent();
+            }
+
+            candidates.add(resolveRelativeToDatasetRoot(root, raw));
+            candidates.add(root.resolve(raw).normalize());
         }
 
         Path firstSafe = null;
@@ -441,6 +444,44 @@ public class MedicationsService {
         }
 
         throw new ResourceNotFoundException("Drug file not found");
+    }
+
+    private Path resolveRelativeToDatasetRoot(Path root, Path storedPath) {
+        List<String> rootSegments = toSegments(root);
+        List<String> storedSegments = toSegments(storedPath);
+
+        for (int overlap = Math.min(rootSegments.size(), storedSegments.size()); overlap > 0; overlap--) {
+            List<String> rootSuffix = rootSegments.subList(rootSegments.size() - overlap, rootSegments.size());
+            List<String> storedPrefix = storedSegments.subList(0, overlap);
+            if (!rootSuffix.equals(storedPrefix)) {
+                continue;
+            }
+
+            Path remainder = segmentsToPath(storedSegments.subList(overlap, storedSegments.size()));
+            return root.resolve(remainder).normalize();
+        }
+
+        return root.resolve(storedPath).normalize();
+    }
+
+    private List<String> toSegments(Path path) {
+        List<String> segments = new ArrayList<>();
+        for (Path segment : path) {
+            segments.add(segment.toString());
+        }
+        return segments;
+    }
+
+    private Path segmentsToPath(List<String> segments) {
+        if (segments.isEmpty()) {
+            return Paths.get("");
+        }
+
+        Path result = Paths.get(segments.get(0));
+        for (int index = 1; index < segments.size(); index++) {
+            result = result.resolve(segments.get(index));
+        }
+        return result;
     }
 
     public record DrugImagePayload(Resource image, String contentType) {
