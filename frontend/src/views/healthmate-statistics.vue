@@ -21,7 +21,6 @@ function initializeDates() {
   fromDate.value = formatDate(from);
 }
 
-const insights = computed(() => summary.value?.insights || []);
 const adherence = computed(() => summary.value?.adherence || []);
 const averageAdherence = computed(() => {
   if (adherence.value.length === 0) return "0.00";
@@ -63,6 +62,14 @@ watch([fromDate, toDate], () => {
   }
 });
 
+const trackedMedications = computed(() => adherence.value.length);
+const healthyAdherenceCount = computed(() =>
+  adherence.value.filter((item) => item.adherencePercent >= 80).length,
+);
+const attentionNeededCount = computed(() =>
+  adherence.value.filter((item) => item.adherencePercent < 60).length,
+);
+
 onMounted(() => {
   initializeDates();
   loadStatistics();
@@ -87,7 +94,7 @@ onMounted(() => {
           @click="loadStatistics"
           style="align-self: flex-end"
         >
-          🔄 Обновить
+          Обновить
         </button>
       </div>
     </article>
@@ -102,25 +109,25 @@ onMounted(() => {
             {{ averageAdherence }}%
           </div>
           <div class="kpi-label">Средняя приверженность</div>
-          <div class="kpi-meta">{{ adherence.length }} лекарств отслежено</div>
+          <div class="kpi-meta">{{ trackedMedications }} лекарств отслежено</div>
         </div>
 
         <div class="kpi-grid">
           <div class="kpi-box">
-            <div class="kpi-number">{{ adherence.length }}</div>
+            <div class="kpi-number">{{ trackedMedications }}</div>
             <div class="kpi-text">Активных лекарств</div>
           </div>
           <div class="kpi-box">
-            <div class="kpi-number">
-              {{ adherence.filter((a) => a.adherencePercent >= 80).length }}
-            </div>
+            <div class="kpi-number">{{ healthyAdherenceCount }}</div>
             <div class="kpi-text">Хорошая приверженность</div>
           </div>
           <div class="kpi-box">
-            <div class="kpi-number">
-              {{ adherence.filter((a) => a.adherencePercent < 60).length }}
-            </div>
+            <div class="kpi-number">{{ attentionNeededCount }}</div>
             <div class="kpi-text">Требует внимания</div>
+          </div>
+          <div class="kpi-box compact">
+            <div class="kpi-number">{{ fromDate }}</div>
+            <div class="kpi-text">Начало периода</div>
           </div>
         </div>
       </div>
@@ -178,14 +185,6 @@ onMounted(() => {
       </div>
     </article>
 
-    <article class="card" v-if="insights.length > 0">
-      <h2 class="card-title">Рекомендации и инсайты</h2>
-      <ul class="insights-list">
-        <li v-for="(text, idx) in insights" :key="idx" class="insight-item">
-          💡 {{ text }}
-        </li>
-      </ul>
-    </article>
   </section>
 </template>
 
@@ -204,7 +203,8 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   padding: 30px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  background: linear-gradient(145deg, rgba(26, 86, 219, 0.12) 0%, rgba(26, 86, 219, 0.04) 100%);
+  border: 1px solid rgba(26, 86, 219, 0.22);
   border-radius: 12px;
 }
 
@@ -217,12 +217,12 @@ onMounted(() => {
 .kpi-label {
   font-size: 16px;
   font-weight: 500;
-  color: #333;
+  color: #1e293b;
 }
 
 .kpi-meta {
   font-size: 13px;
-  color: #999;
+  color: #4b638e;
   margin-top: 8px;
 }
 
@@ -234,22 +234,27 @@ onMounted(() => {
 
 .kpi-box {
   padding: 16px;
-  background: #f9f9f9;
-  border: 1px solid #e0e0e0;
+  background: #f7faff;
+  border: 1px solid #d9e5ff;
   border-radius: 8px;
   text-align: center;
+}
+
+.kpi-box.compact {
+  background: #edf3ff;
+  border-color: #cfe0ff;
 }
 
 .kpi-number {
   font-size: 28px;
   font-weight: 700;
-  color: #0066cc;
+  color: #1a56db;
   margin-bottom: 4px;
 }
 
 .kpi-text {
   font-size: 13px;
-  color: #666;
+  color: #5e6e86;
 }
 
 .medications-adherence {
@@ -260,9 +265,9 @@ onMounted(() => {
 
 .adherence-item {
   padding: 16px;
-  background: #f9f9f9;
+  background: #f7faff;
   border-radius: 8px;
-  border-left: 4px solid #0066cc;
+  border-left: 4px solid #1a56db;
 }
 
 .adherence-header {
@@ -304,24 +309,6 @@ onMounted(() => {
 .empty-state {
   text-align: center;
   padding: 40px 20px;
-}
-
-.insights-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.insight-item {
-  padding: 12px;
-  background: #e7f3ff;
-  border-left: 4px solid #0066cc;
-  border-radius: 4px;
-  color: #333;
-  font-size: 14px;
 }
 
 @media (max-width: 768px) {

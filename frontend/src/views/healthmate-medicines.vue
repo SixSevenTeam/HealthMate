@@ -1,5 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import Icon from "@/shared/components/Icon.vue";
+import { API_BASE_URL } from "@/shared/api/config";
 import {
   createMedication,
   deactivateMedication,
@@ -16,8 +18,30 @@ const meds = ref([]);
 const page = ref(0);
 const size = ref(20);
 const total = ref(0);
+const HIDDEN_DELETED_KEY = "hiddenDeletedMedicationIds";
+function loadHiddenDeleted() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_DELETED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveHiddenDeleted(set) {
+  try {
+    localStorage.setItem(HIDDEN_DELETED_KEY, JSON.stringify(Array.from(set)));
+  } catch (e) {
+    // ignore
+  }
+}
+
+const hiddenDeletedMedicationIds = loadHiddenDeleted();
 const loading = ref(false);
 const errorMessage = ref("");
+const validationErrors = ref({});
 const notice = ref("");
 const searchQuery = ref("");
 const searchResults = ref([]);
@@ -28,6 +52,7 @@ const form = ref({
   customName: "",
   doseAmount: 0,
   doseUnit: "mg",
+  customDoseUnit: "",
   instructions: "",
   startDate: new Date().toISOString().slice(0, 10),
   endDate: null,
@@ -36,14 +61,93 @@ const form = ref({
 
 const expandedMedId = ref(null);
 const medicationSchedules = ref({});
+const showScheduleModal = ref(false);
+const selectedMedForSchedule = ref(null);
+const scheduleError = ref("");
+const scheduleForm = ref({
+  timeOfDay: "",
+  daysOfWeek: [],
+});
+
+const dayNames = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const doseUnitOptions = [
+  { value: "mg", label: "мг" },
+  { value: "pcs", label: "шт" },
+  { value: "ml", label: "мл" },
+  { value: "tab", label: "таб" },
+  { value: "drops", label: "капли" },
+  { value: "other", label: "другое..." },
+];
+
+function getDoseLabel(unit) {
+  if (!unit) return "";
+  const found = doseUnitOptions.find((o) => o.value === unit);
+  if (found) return found.label;
+  // If unit matches a known label (user-entered custom in Cyrillic), return as-is
+  const byLabel = doseUnitOptions.find((o) => o.label === unit);
+  if (byLabel) return byLabel.label;
+  return unit;
+}
+
+function translateScheduleError(error) {
+  const fieldMessages = error?.fields ? Object.values(error.fields).filter(Boolean) : [];
+  if (fieldMessages.length > 0) {
+    return fieldMessages
+      .map((message) => {
+        if (message.includes("must not be empty")) return "Заполните это поле";
+        if (message.includes("must not be null")) return "Заполните это поле";
+        if (message.includes("must be greater than or equal to")) return "Выберите корректное значение";
+        return message;
+      })
+      .join("; ");
+  }
+
+  const message = (error?.message || "").toLowerCase();
+  if (message.includes("validation failed")) {
+    return "Проверьте время и дни недели";
+  }
+  if (message.includes("medication not found")) {
+    return "Лекарство не найдено";
+  }
+  if (message.includes("schedule not found")) {
+    return "Расписание не найдено";
+  }
+  return "Не удалось добавить расписание. Проверьте данные и попробуйте снова.";
+}
+
+function validateForm() {
+  validationErrors.value = {};
+  
+  if (!form.value.customName?.trim()) {
+    validationErrors.value.customName = "Введите название лекарства";
+  }
+  if (form.value.doseAmount <= 0) {
+    validationErrors.value.doseAmount = "Доза должна быть больше 0";
+  }
+  if (!form.value.doseUnit?.trim()) {
+    validationErrors.value.doseUnit = "Выберите единицу измерения";
+  }
+  if (form.value.doseUnit === "other" && !form.value.customDoseUnit?.trim()) {
+    validationErrors.value.doseUnit = "Введите свою единицу измерения";
+  }
+  if (!form.value.startDate) {
+    validationErrors.value.startDate = "Выберите дату начала";
+  }
+  
+  return Object.keys(validationErrors.value).length === 0;
+}
 
 async function loadMedications() {
   loading.value = true;
   errorMessage.value = "";
   try {
     const data = await getMedications(page.value, size.value);
-    meds.value = [...(data.active || []), ...(data.inactive || [])];
-    total.value = data.total || meds.value.length;
+    const active = data.active || [];
+    const inactive = data.inactive || [];
+    meds.value = [...active, ...inactive].filter(
+      (medication) => !hiddenDeletedMedicationIds.has(medication.id),
+    );
+    total.value = meds.value.length;
   } catch (error) {
     errorMessage.value = error.message || "Не удалось загрузить лекарства";
   } finally {
@@ -77,6 +181,11 @@ function selectDrug(drug) {
 async function onCreate() {
   notice.value = "";
   errorMessage.value = "";
+  
+  if (!validateForm()) {
+    return;
+  }
+  
   try {
     const validation = await validateMedication({
       drugId: form.value.drugId,
@@ -88,19 +197,29 @@ async function onCreate() {
       endDate: form.value.endDate,
     });
 
-    if ((validation?.warnings || []).length > 0) {
-      notice.value = validation.warnings.join("; ");
+    const filteredWarnings = (validation?.warnings || []).filter(
+      (warning) => !warning.toLowerCase().includes("safety validation is temporarily unavailable"),
+    );
+
+    if (filteredWarnings.length > 0) {
+      notice.value = filteredWarnings.join("; ");
     }
 
     await createMedication({
       drugId: form.value.drugId,
       customName: form.value.customName,
       doseAmount: Number(form.value.doseAmount),
-      doseUnit: form.value.doseUnit,
+      doseUnit:
+        form.value.doseUnit === "other"
+          ? form.value.customDoseUnit.trim()
+          : form.value.doseUnit,
       instructions: form.value.instructions,
       startDate: form.value.startDate,
       endDate: form.value.endDate,
-      schedules: form.value.schedules,
+      schedules: form.value.schedules.map((schedule) => ({
+        timeOfDay: schedule.timeOfDay,
+        daysOfWeek: schedule.daysOfWeek,
+      })),
     });
 
     form.value = {
@@ -108,11 +227,13 @@ async function onCreate() {
       customName: "",
       doseAmount: 0,
       doseUnit: "mg",
+      customDoseUnit: "",
       instructions: "",
       startDate: new Date().toISOString().slice(0, 10),
       endDate: null,
       schedules: [{ timeOfDay: "08:00:00", daysOfWeek: [1, 2, 3, 4, 5] }],
     };
+    validationErrors.value = {};
     await loadMedications();
   } catch (error) {
     errorMessage.value = error.message || "Не удалось добавить лекарство";
@@ -121,8 +242,9 @@ async function onCreate() {
 
 async function onToggle(item) {
   try {
-    await setMedicationActive(item.id, !item.isActive);
-    await loadMedications();
+    const nextState = !item.isActive;
+    await setMedicationActive(item.id, nextState);
+    item.isActive = nextState;
   } catch (error) {
     errorMessage.value = error.message || "Не удалось изменить статус";
   }
@@ -131,7 +253,11 @@ async function onToggle(item) {
 async function onDeactivate(item) {
   try {
     await deactivateMedication(item.id);
-    await loadMedications();
+    // mark as deleted by user and persist so it doesn't reappear after reload
+    hiddenDeletedMedicationIds.add(item.id);
+    saveHiddenDeleted(hiddenDeletedMedicationIds);
+    meds.value = meds.value.filter((medication) => medication.id !== item.id);
+    total.value = meds.value.length;
   } catch (error) {
     errorMessage.value = error.message || "Не удалось деактивировать лекарство";
   }
@@ -153,20 +279,62 @@ async function toggleMedicationDetails(medId) {
   }
 }
 
-async function onAddSchedule(medId) {
-  const timeStr = prompt("Введите время (HH:MM):", "08:00");
-  if (!timeStr) return;
+function openScheduleModal(medId) {
+  selectedMedForSchedule.value = medId;
+  showScheduleModal.value = true;
+  scheduleError.value = "";
+  scheduleForm.value = {
+    timeOfDay: "",
+    daysOfWeek: [],
+  };
+}
+
+function closeScheduleModal() {
+  showScheduleModal.value = false;
+  selectedMedForSchedule.value = null;
+  scheduleError.value = "";
+}
+
+function toggleDay(day) {
+  const idx = scheduleForm.value.daysOfWeek.indexOf(day);
+  if (idx >= 0) {
+    scheduleForm.value.daysOfWeek.splice(idx, 1);
+  } else {
+    scheduleForm.value.daysOfWeek.push(day);
+    scheduleForm.value.daysOfWeek.sort((a, b) => a - b);
+  }
+}
+
+async function onAddSchedule() {
+  const medId = selectedMedForSchedule.value;
+  if (!medId) return;
+
+  scheduleError.value = "";
+  if (!scheduleForm.value.timeOfDay) {
+    scheduleError.value = "Выберите время приема";
+    return;
+  }
+  if (!scheduleForm.value.daysOfWeek.length) {
+    scheduleError.value = "Выберите хотя бы один день недели";
+    return;
+  }
+
   try {
+    const timeOfDay = scheduleForm.value.timeOfDay.includes(":")
+      ? `${scheduleForm.value.timeOfDay.length === 5 ? `${scheduleForm.value.timeOfDay}:00` : scheduleForm.value.timeOfDay}`
+      : scheduleForm.value.timeOfDay;
+
     const schedule = await addSchedule(medId, {
-      timeOfDay: `${timeStr}:00`,
-      daysOfWeek: [1, 2, 3, 4, 5],
+      timeOfDay,
+      daysOfWeek: scheduleForm.value.daysOfWeek,
     });
     if (!medicationSchedules.value[medId]) {
       medicationSchedules.value[medId] = [];
     }
     medicationSchedules.value[medId].push(schedule);
+    closeScheduleModal();
   } catch (error) {
-    errorMessage.value = "Не удалось добавить расписание";
+    scheduleError.value = translateScheduleError(error);
   }
 }
 
@@ -178,6 +346,25 @@ async function onDeleteSchedule(medId, scheduleId) {
     );
   } catch (error) {
     errorMessage.value = "Не удалось удалить расписание";
+  }
+}
+
+async function openDrugDetails(item) {
+  try {
+    let id = item.drugId || null;
+    if (!id) {
+      const q = (item.tradeName || item.customName || "").trim();
+      if (!q) return;
+      const result = await searchDrugs(q);
+      const first = result?.results?.[0];
+      if (!first) return;
+      id = first.id;
+    }
+    if (!id) return;
+    const url = `${API_BASE_URL}/api/drugs/${id}/details`;
+    window.open(url, "_blank");
+  } catch (err) {
+    console.error("openDrugDetails error:", err);
   }
 }
 
@@ -220,35 +407,86 @@ onMounted(loadMedications);
           </div>
         </div>
 
-        <input
-          v-model="form.customName"
-          class="input"
-          placeholder="Название лекарства"
-        />
-        <input
-          v-model.number="form.doseAmount"
-          class="input"
-          type="number"
-          placeholder="Доза"
-        />
-        <input
-          v-model="form.doseUnit"
-          class="input"
-          placeholder="Единица (мг, мл и т.д.)"
-        />
-        <input
-          v-model="form.instructions"
-          class="input"
-          placeholder="Инструкция (например: после еды)"
-        />
-        <input v-model="form.startDate" class="input" type="date" />
-        <input
-          v-model="form.endDate"
-          class="input"
-          type="date"
-          placeholder="Дата окончания (опционально)"
-        />
-        <button class="btn" type="button" @click="onCreate">
+        <div class="form-field">
+          <label class="form-label">Название лекарства *</label>
+          <input
+            v-model="form.customName"
+            class="input"
+            :class="{ 'input-error': validationErrors.customName }"
+            placeholder="Введите или выберите из справочника"
+          />
+          <p v-if="validationErrors.customName" class="error-text">
+            {{ validationErrors.customName }}
+          </p>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Доза *</label>
+          <input
+            v-model.number="form.doseAmount"
+            class="input"
+            :class="{ 'input-error': validationErrors.doseAmount }"
+            type="number"
+            placeholder="0"
+          />
+          <p v-if="validationErrors.doseAmount" class="error-text">
+            {{ validationErrors.doseAmount }}
+          </p>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Единица измерения *</label>
+          <select
+            v-model="form.doseUnit"
+            class="input"
+            :class="{ 'input-error': validationErrors.doseUnit }"
+          >
+            <option v-for="opt in doseUnitOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <input
+            v-if="form.doseUnit === 'other'"
+            v-model="form.customDoseUnit"
+            class="input"
+            placeholder="Введите свою единицу (например: капс.)"
+            style="margin-top:8px;"
+          />
+          <p v-if="validationErrors.doseUnit" class="error-text">
+            {{ validationErrors.doseUnit }}
+          </p>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Инструкция</label>
+          <input
+            v-model="form.instructions"
+            class="input"
+            placeholder="например: после еды"
+          />
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Дата начала приема *</label>
+          <input
+            v-model="form.startDate"
+            class="input"
+            :class="{ 'input-error': validationErrors.startDate }"
+            type="date"
+          />
+          <p v-if="validationErrors.startDate" class="error-text">
+            {{ validationErrors.startDate }}
+          </p>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Дата окончания (опционально)</label>
+          <input
+            v-model="form.endDate"
+            class="input"
+            type="date"
+          />
+        </div>
+
+        <button class="btn" type="button" @click="onCreate" style="grid-column: 1 / -1;">
           Сохранить лекарство
         </button>
       </div>
@@ -264,28 +502,44 @@ onMounted(loadMedications);
           <div class="med-header" @click="toggleMedicationDetails(item.id)">
             <div>
               <strong>{{ item.tradeName || item.customName }}</strong>
+              <Icon
+                name="profileHelp"
+                :size="18"
+                className="med-help-icon"
+                @click.stop="openDrugDetails(item)"
+                title="Открыть карточку препарата"
+              />
               <p class="small">
-                {{ item.doseAmount }} {{ item.doseUnit }} -
+                {{ item.doseAmount }} {{ getDoseLabel(item.doseUnit) }} -
                 {{ item.instructions }}
               </p>
             </div>
             <div class="med-actions">
-              <span class="badge" :class="item.isActive ? 'ok' : 'warn'">
-                {{ item.isActive ? "✓ Активно" : "○ Неактивно" }}
-              </span>
               <button
-                class="text-btn"
+                class="icon-action-btn"
                 type="button"
+                :title="item.isActive ? 'Активно (нажмите, чтобы приостановить)' : 'Приостановлено (нажмите, чтобы включить)'"
+                :aria-label="item.isActive ? 'Приостановить препарат' : 'Включить препарат'"
                 @click.stop="onToggle(item)"
               >
-                {{ item.isActive ? "Отключить" : "Включить" }}
+                <Icon
+                  :name="item.isActive ? 'medStateActive' : 'medStatePaused'"
+                  :size="22"
+                  className="med-state-icon"
+                />
               </button>
               <button
-                class="text-btn danger"
+                class="icon-action-btn"
                 type="button"
+                title="Удалить из списка"
+                aria-label="Удалить из списка"
                 @click.stop="onDeactivate(item)"
               >
-                Удалить
+                <Icon
+                  name="medDelete"
+                  :size="20"
+                  className="med-delete-icon"
+                />
               </button>
             </div>
           </div>
@@ -319,15 +573,18 @@ onMounted(loadMedications);
                     {{ sch.daysOfWeek.join(", ") }}</span
                   >
                   <button
-                    class="text-btn"
+                    class="schedule-delete-btn"
+                    type="button"
+                    title="Удалить время приема"
+                    aria-label="Удалить время приема"
                     @click="onDeleteSchedule(item.id, sch.id)"
                   >
-                    Удалить
+                    <Icon name="medDelete" :size="18" className="schedule-delete-icon" />
                   </button>
                 </li>
               </ul>
               <p v-else class="small muted">Нет расписания</p>
-              <button class="btn small" @click="onAddSchedule(item.id)">
+              <button type="button" class="btn small" @click="openScheduleModal(item.id)">
                 + Добавить время приема
               </button>
             </div>
@@ -336,6 +593,56 @@ onMounted(loadMedications);
       </div>
     </article>
   </section>
+
+  <!-- Modal for adding schedule -->
+  <div v-if="showScheduleModal" class="modal-overlay" @click.self="closeScheduleModal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title">Добавить время приема</h3>
+        <button type="button" class="modal-close" @click="closeScheduleModal">×</button>
+      </div>
+      
+      <div class="modal-body">
+        <div class="form-field">
+          <label class="form-label">Время приема</label>
+          <input
+            v-model="scheduleForm.timeOfDay"
+            type="time"
+            class="input"
+            placeholder="Выберите время"
+          />
+          <p class="small muted">Например, 08:00 или 13:30</p>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Дни недели</label>
+          <div class="days-grid">
+            <label v-for="(day, idx) in dayNames" :key="idx" class="day-checkbox">
+              <input
+                type="checkbox"
+                :checked="scheduleForm.daysOfWeek.includes(idx + 1)"
+                @change="toggleDay(idx + 1)"
+              />
+              <span>{{ day }}</span>
+            </label>
+          </div>
+        </div>
+
+        <p v-if="scheduleError" class="error-text schedule-error">
+          {{ scheduleError }}
+        </p>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn secondary" @click="closeScheduleModal">
+          Отмена
+        </button>
+        <button type="button" class="btn" @click="onAddSchedule">
+          Добавить
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -362,6 +669,24 @@ onMounted(loadMedications);
 .search-item:hover {
   background: #efefef;
 }
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.input-error {
+  border-color: #dc2626 !important;
+  background-color: #fef2f2;
+}
+
 .medications-list {
   display: flex;
   flex-direction: column;
@@ -388,10 +713,49 @@ onMounted(loadMedications);
   gap: 8px;
   align-items: center;
 }
+
+.icon-action-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.icon-action-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.icon-action-btn:focus-visible {
+  outline: 2px solid #1c7ed6;
+  outline-offset: 2px;
+}
+
+.med-state-icon,
+.med-delete-icon {
+  background: transparent;
+  display: block;
+}
 .med-details {
   padding: 12px;
   background: #f9f9f9;
   border-top: 1px solid #ddd;
+}
+
+.med-help-icon {
+  margin-left: 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  vertical-align: middle;
 }
 .warnings {
   background: #fff3cd;
@@ -415,9 +779,149 @@ onMounted(loadMedications);
 .schedules li {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   padding: 6px;
-  background: white;
+  background: transparent;
   border-radius: 3px;
   margin-bottom: 4px;
+}
+
+.schedule-delete-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.schedule-delete-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.schedule-delete-icon {
+  background: transparent;
+  display: block;
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-dialog {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 400px;
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #eaeaf2;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111;
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 28px;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  color: #111;
+}
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 16px 20px;
+  border-top: 1px solid #eaeaf2;
+}
+
+.modal-footer .btn {
+  min-width: 100px;
+}
+
+.schedule-error {
+  margin-top: 4px;
+}
+
+.days-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.day-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.day-checkbox:hover {
+  background: #f0f0f0;
+}
+
+.day-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.day-checkbox input[type="checkbox"]:checked {
+  accent-color: #0079e0;
+}
+
+.day-checkbox input[type="checkbox"]:checked + span {
+  font-weight: 600;
+  color: #0079e0;
 }
 </style>
