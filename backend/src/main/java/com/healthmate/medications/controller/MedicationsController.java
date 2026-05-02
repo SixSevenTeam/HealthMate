@@ -8,6 +8,7 @@ import com.healthmate.medications.dto.CreateMedicationRequest;
 import com.healthmate.medications.dto.IntakeLogResponse;
 import com.healthmate.medications.dto.IntakeLogStatusRequest;
 import com.healthmate.medications.dto.IntakeLogsResponse;
+import com.healthmate.medications.dto.MarkIntakeRequest;
 import com.healthmate.medications.dto.MedicationValidationRequest;
 import com.healthmate.medications.dto.MedicationScheduleRequest;
 import com.healthmate.medications.dto.MedicationScheduleResponse;
@@ -241,7 +242,7 @@ public class MedicationsController {
     }
 
     @GetMapping("/{id}/intake-logs")
-    @Operation(summary = "Get intake logs", description = "Returns intake logs for medication in date range")
+    @Operation(summary = "Get intake logs", description = "Returns intake logs for medication in date range. If from/to not provided, defaults to today ±7 days")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Intake logs returned", content = @Content(schema = @Schema(implementation = IntakeLogsResponse.class))),
         @ApiResponse(responseCode = "400", description = "Validation error", content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -250,15 +251,20 @@ public class MedicationsController {
     })
     public ResponseEntity<IntakeLogsResponse> getIntakeLogs(
         @PathVariable UUID id,
-        @Parameter(description = "From date (inclusive), format yyyy-MM-dd", example = "2026-04-01")
-        @RequestParam LocalDate from,
-        @Parameter(description = "To date (inclusive), format yyyy-MM-dd", example = "2026-04-07")
-        @RequestParam LocalDate to
+        @Parameter(description = "From date (inclusive), format yyyy-MM-dd. Defaults to today", example = "2026-04-01")
+        @RequestParam(required = false) LocalDate from,
+        @Parameter(description = "To date (inclusive), format yyyy-MM-dd. Defaults to 7 days from today", example = "2026-04-07")
+        @RequestParam(required = false) LocalDate to
     ) {
         UUID userId = getUserId();
         ZoneId zone = ZoneId.systemDefault();
-        Instant fromInstant = from.atStartOfDay(zone).toInstant();
-        Instant toInstant = to.plusDays(1).atStartOfDay(zone).toInstant();
+        
+        // Set defaults if not provided
+        LocalDate fromDate = from != null ? from : LocalDate.now(zone);
+        LocalDate toDate = to != null ? to : LocalDate.now(zone).plusDays(7);
+        
+        Instant fromInstant = fromDate.atStartOfDay(zone).toInstant();
+        Instant toInstant = toDate.plusDays(1).atStartOfDay(zone).toInstant();
 
         List<IntakeLogResponse> logs = medicationsService.getIntakeLogs(id, userId, fromInstant, toInstant).stream()
             .map(log -> IntakeLogResponse.builder()
@@ -301,6 +307,34 @@ public class MedicationsController {
         UUID userId = getUserId();
         var updated = medicationsService.setIntakeStatus(logId, userId, request.getStatus());
         return ResponseEntity.ok(java.util.Map.of("id", logId, "status", updated.getStatus()));
+    }
+
+    @PostMapping("/{medicationId}/intake-logs/mark")
+    @Operation(summary = "Mark intake by date", description = "Marks or backfills an intake log for the selected schedule and date")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Intake marked", content = @Content(examples = @ExampleObject(value = "{\"id\":\"00000000-0000-0000-0000-000000000000\",\"status\":\"taken\"}"))),
+        @ApiResponse(responseCode = "400", description = "Validation error", content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+        @ApiResponse(responseCode = "404", description = "Medication or schedule not found", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    public ResponseEntity<?> markIntake(
+        @PathVariable UUID medicationId,
+        @Valid @RequestBody MarkIntakeRequest request
+    ) {
+        UUID userId = getUserId();
+        var updated = medicationsService.markIntake(
+            medicationId,
+            request.getScheduleId(),
+            request.getDate(),
+            userId,
+            request.getStatus()
+        );
+        HashMap<String, Object> resp = new HashMap<>();
+        resp.put("id", updated.getId());
+        resp.put("status", updated.getStatus());
+        resp.put("scheduledAt", updated.getScheduledAt());
+        resp.put("takenAt", updated.getTakenAt());
+        return ResponseEntity.ok(resp);
     }
 
     private UserMedicationResponse toMedicationResponse(UserMedication medication, MedicationSafetyResponse safetyResponse) {

@@ -23,6 +23,9 @@ public class DashboardSummaryResponse {
     @JsonProperty("insights")
     private List<String> insights;
 
+    @JsonProperty("dailySeries")
+    private List<DailySeriesDTO> dailySeries;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -52,5 +55,25 @@ public class DashboardSummaryResponse {
 
         @JsonProperty("missedDates")
         private List<String> missedDates;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DailySeriesDTO {
+        @JsonProperty("date")
+        private LocalDate date;
+
+        @JsonProperty("taken")
+        private int taken;
+
+        @JsonProperty("waiting")
+        private int waiting;
+
+        @JsonProperty("missed")
+        private int missed;
+
+        @JsonProperty("totalScheduled")
+        private int totalScheduled;
     }
 }
