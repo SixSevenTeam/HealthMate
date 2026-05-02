@@ -7,6 +7,7 @@ import {
   sendMessage,
   deleteConversation,
 } from "@/entities/chat/api/chatApi";
+import Icon from "@/shared/components/Icon.vue";
 
 const conversations = ref([]);
 const selectedConversationId = ref("");
@@ -18,6 +19,7 @@ const errorMessage = ref("");
 const messagesContainer = ref(null);
 const newConvTitle = ref("");
 const showNewConvForm = ref(false);
+const showDeleteModal = ref(false);
 
 const selectedConversation = computed(() =>
   conversations.value.find((c) => c.id === selectedConversationId.value),
@@ -107,7 +109,6 @@ async function createNewConversation() {
 
 async function deleteCurrentConversation() {
   if (!selectedConversationId.value) return;
-  if (!confirm("Вы уверены?")) return;
 
   try {
     await deleteConversation(selectedConversationId.value);
@@ -123,7 +124,18 @@ async function deleteCurrentConversation() {
     }
   } catch (error) {
     errorMessage.value = "Не удалось удалить диалог";
+  } finally {
+    showDeleteModal.value = false;
   }
+}
+
+function requestDeleteConversation() {
+  if (!selectedConversationId.value) return;
+  showDeleteModal.value = true;
+}
+
+function closeDeleteModal() {
+  showDeleteModal.value = false;
 }
 
 watch(selectedConversationId, loadMessages);
@@ -136,11 +148,13 @@ onMounted(loadConversations);
       <div class="row-between">
         <h2 class="card-title">Диалоги</h2>
         <button
-          class="btn small"
+          class="btn small conv-add-icon-btn"
           type="button"
           @click="showNewConvForm = !showNewConvForm"
+          aria-label="Добавить диалог"
+          title="Добавить диалог"
         >
-          +
+          <Icon name="chatAdd" :size="20" className="icon-btn-mark" />
         </button>
       </div>
 
@@ -195,12 +209,14 @@ onMounted(loadConversations);
           </p>
         </div>
         <button
-          class="btn small danger"
+          class="btn small icon-action-btn"
           type="button"
-          @click="deleteCurrentConversation"
+          @click="requestDeleteConversation"
           v-if="selectedConversationId"
+          aria-label="Удалить диалог"
+          title="Удалить диалог"
         >
-          Удалить диалог
+          <Icon name="chatDelete" :size="20" className="icon-btn-mark" />
         </button>
       </div>
 
@@ -242,16 +258,55 @@ onMounted(loadConversations);
           :disabled="sending"
         />
         <button
-          class="btn"
+          class="btn send-icon-btn"
           type="button"
           :disabled="sending || !prompt.trim()"
           @click="submitMessage"
+          aria-label="Отправить сообщение"
+          :title="sending ? 'Отправка...' : 'Отправить сообщение'"
         >
-          {{ sending ? "⏳ Отправка..." : "📤 Отправить" }}
+          <Icon name="chatSend" :size="22" className="icon-btn-mark send-icon-flip" />
         </button>
       </div>
     </article>
   </section>
+
+  <div
+    v-if="showDeleteModal"
+    class="modal-overlay"
+    @click.self="closeDeleteModal"
+  >
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title">Удалить диалог?</h3>
+        <button
+          type="button"
+          class="modal-close"
+          @click="closeDeleteModal"
+          aria-label="Закрыть окно"
+        >
+          ×
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-text">
+          Диалог
+          <strong>{{ selectedConversation?.title || "Без названия" }}</strong>
+          будет удален без возможности восстановления.
+        </p>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn secondary" @click="closeDeleteModal">
+          Отмена
+        </button>
+        <button type="button" class="btn danger" @click="deleteCurrentConversation">
+          Удалить
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -409,6 +464,143 @@ onMounted(loadConversations);
 
 .chat-input-row input {
   flex: 1;
+}
+
+.conv-add-icon-btn {
+  min-width: 38px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: var(--primary);
+  border: 1px solid #7da8ff;
+  box-shadow: none;
+}
+
+.conv-add-icon-btn:hover {
+  background: #f3f7ff;
+  border-color: #4f86f5;
+}
+
+.icon-action-btn {
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #cc3344;
+  border: 1px solid #f2cdd3;
+  box-shadow: none;
+}
+
+.icon-action-btn:hover {
+  background: #fff3f5;
+  border-color: #e9aeb8;
+}
+
+.send-icon-btn {
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--primary);
+  border: 1px solid #7da8ff;
+  box-shadow: none;
+}
+
+.send-icon-btn:hover:not(:disabled) {
+  background: #f3f7ff;
+  border-color: #4f86f5;
+}
+
+.send-icon-btn:disabled {
+  opacity: 0.6;
+}
+
+.icon-btn-mark {
+  display: block;
+}
+
+.send-icon-flip {
+  transform: scaleX(-1);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.modal-dialog {
+  width: min(92vw, 440px);
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e3e8f3;
+  box-shadow: 0 20px 45px rgba(0, 25, 60, 0.22);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid #edf1f7;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a2433;
+}
+
+.modal-close {
+  border: none;
+  background: transparent;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  color: #5a6b85;
+}
+
+.modal-close:hover {
+  background: #f1f5fb;
+  color: #24344f;
+}
+
+.modal-body {
+  padding: 16px 18px;
+}
+
+.modal-text {
+  margin: 0;
+  color: #2c3b53;
+  line-height: 1.45;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px 18px;
 }
 
 @media (max-width: 768px) {

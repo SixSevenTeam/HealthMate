@@ -1,71 +1,389 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getDashboardSummary } from "@/entities/dashboard/api/dashboardApi";
+import {
+  getIntakeLogs,
+  getMedications,
+} from "@/entities/medications/api/medicationsApi";
 
 const loading = ref(false);
 const errorMessage = ref("");
 const summary = ref(null);
+const recoveredDailySeries = ref([]);
+const viewMode = ref(
+  recoveredDailySeries.value.length > 0 ? "daily" : "medication",
+);
+const periodPreset = ref("7d");
 const fromDate = ref("");
 const toDate = ref("");
 
-function formatDate(date) {
-  return date.toISOString().slice(0, 10);
+const presetOptions = [
+  { value: "7d", label: "7 дней" },
+  { value: "30d", label: "30 дней" },
+  { value: "90d", label: "3 месяца" },
+  { value: "custom", label: "Произвольный период" },
+];
+
+function pad(value) {
+  return String(value).padStart(2, "0");
 }
 
-function initializeDates() {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(to.getDate() - 6);
-
-  toDate.value = formatDate(to);
-  fromDate.value = formatDate(from);
+function toDateInputValue(date) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-const insights = computed(() => summary.value?.insights || []);
+function shiftDays(date, amount) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+
+function formatAxisLabel(dateValue) {
+  if (!dateValue) return "";
+  const [year, month, day] = String(dateValue).split("-");
+  if (!year || !month || !day) return String(dateValue);
+  return `${day}.${month}`;
+}
+
+function applyPreset(preset = periodPreset.value) {
+  const today = new Date();
+  const to = new Date(today);
+  let from = new Date(today);
+
+  if (preset === "7d") {
+    from = shiftDays(today, -6);
+  } else if (preset === "30d") {
+    from = shiftDays(today, -29);
+  } else if (preset === "90d") {
+    from = new Date(today);
+    from.setMonth(from.getMonth() - 3);
+  }
+
+  fromDate.value = toDateInputValue(from);
+  toDate.value = toDateInputValue(to);
+}
+
 const adherence = computed(() => summary.value?.adherence || []);
-const averageAdherence = computed(() => {
-  if (adherence.value.length === 0) return "0.00";
-  const total = adherence.value.reduce(
-    (acc, item) => acc + (item.adherencePercent || 0),
-    0,
+const dailySeries = computed(() => {
+  const primary =
+    summary.value?.dailySeries ||
+    summary.value?.daily_series ||
+    summary.value?.daily;
+  if (Array.isArray(primary) && primary.length > 0) {
+    return primary;
+  }
+  return recoveredDailySeries.value;
+});
+const chartMode = computed(() => viewMode.value);
+
+function parseDateInput(dateValue) {
+  if (!dateValue) return null;
+  const date = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function toDateKeyLocal(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeStatus(log) {
+  const raw = String(log?.status || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "taken") return "taken";
+  if (raw === "missed" || raw === "skipped") return "missed";
+  if (raw === "pending") {
+    const scheduledAt = log?.scheduledAt ? new Date(log.scheduledAt) : null;
+    if (
+      scheduledAt &&
+      !Number.isNaN(scheduledAt.getTime()) &&
+      scheduledAt > new Date()
+    ) {
+      return "waiting";
+    }
+    return "missed";
+  }
+
+  const scheduledAt = log?.scheduledAt ? new Date(log.scheduledAt) : null;
+  if (
+    scheduledAt &&
+    !Number.isNaN(scheduledAt.getTime()) &&
+    scheduledAt > new Date()
+  ) {
+    return "waiting";
+  }
+  return "missed";
+}
+
+async function rebuildDailySeriesFromLogs(from, to) {
+  const fromParsed = parseDateInput(from);
+  const toParsed = parseDateInput(to);
+  if (!fromParsed || !toParsed || fromParsed > toParsed) {
+    return [];
+  }
+
+  const byDate = new Map();
+  for (
+    let cursor = new Date(fromParsed);
+    cursor <= toParsed;
+    cursor.setDate(cursor.getDate() + 1)
+  ) {
+    const key = toDateKeyLocal(cursor);
+    byDate.set(key, {
+      date: key,
+      taken: 0,
+      waiting: 0,
+      missed: 0,
+      totalScheduled: 0,
+    });
+  }
+
+  const medsResponse = await getMedications(0, 200);
+  const allMeds = [
+    ...(medsResponse?.active || []),
+    ...(medsResponse?.inactive || []),
+  ];
+  if (allMeds.length === 0) {
+    return Array.from(byDate.values());
+  }
+
+  const logsResponses = await Promise.all(
+    allMeds.map(async (med) => {
+      try {
+        const payload = await getIntakeLogs(med.id, from, to);
+        return payload?.logs || payload || [];
+      } catch {
+        return [];
+      }
+    }),
   );
-  return (total / adherence.value.length).toFixed(2);
+
+  for (let i = 0; i < logsResponses.length; i++) {
+    const med = allMeds[i];
+    const logs = logsResponses[i] || [];
+    for (const log of logs) {
+      if (!log?.scheduledAt) continue;
+      const scheduledAt = new Date(log.scheduledAt);
+      if (Number.isNaN(scheduledAt.getTime())) continue;
+
+      const dayKey = toDateKeyLocal(scheduledAt);
+      const bucket = byDate.get(dayKey);
+      if (!bucket) continue;
+
+      const status = normalizeStatus(log);
+
+      // If medication inactive, do not count future expected (waiting) items
+      if (!med?.isActive && status === "waiting") {
+        continue;
+      }
+
+      bucket.totalScheduled += 1;
+      if (status === "taken") {
+        bucket.taken += 1;
+      } else if (status === "waiting") {
+        bucket.waiting += 1;
+      } else {
+        bucket.missed += 1;
+      }
+    }
+  }
+
+  return Array.from(byDate.values());
+}
+
+const totals = computed(() =>
+  dailySeries.value.length > 0
+    ? dailySeries.value.reduce(
+        (acc, day) => {
+          acc.taken += day.taken || 0;
+          acc.waiting += day.waiting || 0;
+          acc.missed += day.missed || 0;
+          acc.totalScheduled += day.totalScheduled || 0;
+          return acc;
+        },
+        { taken: 0, waiting: 0, missed: 0, totalScheduled: 0 },
+      )
+    : adherence.value.reduce(
+        (acc, item) => {
+          const missed = Array.isArray(item.missedDates)
+            ? item.missedDates.length
+            : 0;
+          const taken = item.totalTaken || 0;
+          const totalScheduled = item.totalScheduled || 0;
+
+          acc.taken += taken;
+          acc.missed += missed;
+          acc.waiting += Math.max(totalScheduled - taken - missed, 0);
+          acc.totalScheduled += totalScheduled;
+          return acc;
+        },
+        { taken: 0, waiting: 0, missed: 0, totalScheduled: 0 },
+      ),
+);
+
+const overallAdherence = computed(() => {
+  if (totals.value.totalScheduled === 0) return "0.00";
+  return ((totals.value.taken / totals.value.totalScheduled) * 100).toFixed(2);
 });
 
 const adherenceColor = computed(() => {
-  const avg = parseFloat(averageAdherence.value);
-  if (avg >= 80) return "#27ae60"; // green
-  if (avg >= 60) return "#f39c12"; // orange
-  return "#e74c3c"; // red
+  const avg = parseFloat(overallAdherence.value);
+  if (avg >= 80) return "#27ae60";
+  if (avg >= 60) return "#f39c12";
+  return "#e74c3c";
 });
 
-async function loadStatistics() {
+const trackedMedications = computed(() => adherence.value.length);
+const healthyAdherenceCount = computed(
+  () => adherence.value.filter((item) => item.adherencePercent >= 80).length,
+);
+const attentionNeededCount = computed(
+  () => adherence.value.filter((item) => item.adherencePercent < 60).length,
+);
+
+const chartMax = computed(() => {
+  const source =
+    chartMode.value === "daily" ? dailySeries.value : adherence.value;
+  const maxValue = Math.max(
+    ...source.map((item) => item.totalScheduled || 0),
+    0,
+  );
+  return Math.max(maxValue, 1);
+});
+
+const chartBars = computed(() =>
+  (chartMode.value === "daily" ? dailySeries.value : adherence.value).map(
+    (item) => {
+      const isDaily = chartMode.value === "daily";
+      const taken = isDaily ? item.taken || 0 : item.totalTaken || 0;
+      const missed = isDaily
+        ? item.missed || 0
+        : Array.isArray(item.missedDates)
+          ? item.missedDates.length
+          : 0;
+      const totalScheduled = item.totalScheduled || 0;
+      const waiting = Math.max(totalScheduled - taken - missed, 0);
+      const segments = [
+        {
+          key: "missed",
+          label: "Пропущено",
+          value: missed,
+          color: "#e74c3c",
+        },
+        {
+          key: "waiting",
+          label: "Ожидание",
+          value: waiting,
+          color: "#f39c12",
+        },
+        {
+          key: "taken",
+          label: "Принято",
+          value: taken,
+          color: "#27ae60",
+        },
+      ];
+
+      let bottom = 0;
+      return {
+        ...item,
+        label: isDaily
+          ? formatAxisLabel(item.date)
+          : item.tradeName || item.medicationId || "Лекарство",
+        subtitle: isDaily ? item.date : `${taken} из ${totalScheduled}`,
+        segments: segments.map((segment) => {
+          const height = (segment.value / chartMax.value) * 100;
+          const entry = { ...segment, height, bottom };
+          bottom += height;
+          return entry;
+        }),
+      };
+    },
+  ),
+);
+
+function loadStatistics() {
   if (!fromDate.value || !toDate.value) {
-    initializeDates();
-    return;
+    applyPreset("7d");
   }
 
   loading.value = true;
   errorMessage.value = "";
+  recoveredDailySeries.value = [];
 
-  try {
-    summary.value = await getDashboardSummary(fromDate.value, toDate.value);
-  } catch (error) {
-    errorMessage.value = error.message || "Не удалось загрузить статистику";
-  } finally {
-    loading.value = false;
-  }
+  return getDashboardSummary(fromDate.value, toDate.value)
+    .then(async (data) => {
+      summary.value = data;
+
+      const apiSeries =
+        data?.dailySeries || data?.daily_series || data?.daily || [];
+      if (!Array.isArray(apiSeries) || apiSeries.length === 0) {
+        recoveredDailySeries.value = await rebuildDailySeriesFromLogs(
+          fromDate.value,
+          toDate.value,
+        );
+      }
+    })
+    .catch((error) => {
+      errorMessage.value = error.message || "Не удалось загрузить статистику";
+    })
+    .finally(() => {
+      loading.value = false;
+    });
 }
 
-watch([fromDate, toDate], () => {
-  if (fromDate.value && toDate.value) {
-    loadStatistics();
+function handlePresetChange() {
+  if (periodPreset.value === "custom") {
+    return;
   }
-});
+
+  applyPreset(periodPreset.value);
+  loadStatistics();
+}
+
+function applyCustomPeriod() {
+  periodPreset.value = "custom";
+  if (!fromDate.value || !toDate.value) {
+    applyPreset("7d");
+    periodPreset.value = "custom";
+  }
+  loadStatistics();
+}
+
+function refreshIfVisible() {
+  if (document.visibilityState !== "visible") return;
+  if (loading.value) return;
+  if (!fromDate.value || !toDate.value) return;
+  loadStatistics();
+}
+
+function onIntakeMarked() {
+  if (loading.value) return;
+  if (!fromDate.value || !toDate.value) return;
+  loadStatistics();
+}
 
 onMounted(() => {
-  initializeDates();
+  applyPreset("7d");
   loadStatistics();
+  window.addEventListener("focus", refreshIfVisible);
+  document.addEventListener("visibilitychange", refreshIfVisible);
+  window.addEventListener("storage", () => {
+    const lastMarked = localStorage.getItem("healthmate.intakeMarked");
+    if (lastMarked) {
+      onIntakeMarked();
+    }
+  });
+});
+
+onUnmounted(() => {
+  window.removeEventListener("focus", refreshIfVisible);
+  document.removeEventListener("visibilitychange", refreshIfVisible);
 });
 </script>
 
@@ -73,54 +391,157 @@ onMounted(() => {
   <section class="stack">
     <article class="card">
       <h2 class="card-title">Фильтр периода</h2>
-      <div class="form-grid" style="grid-template-columns: 1fr 1fr auto">
+      <div class="period-toolbar">
         <div>
-          <label class="small">От</label>
-          <input v-model="fromDate" class="input" type="date" />
+          <label class="small">Быстрый выбор</label>
+          <select
+            v-model="periodPreset"
+            class="input"
+            @change="handlePresetChange"
+          >
+            <option
+              v-for="option in presetOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
         </div>
-        <div>
-          <label class="small">До</label>
-          <input v-model="toDate" class="input" type="date" />
+
+        <div class="form-grid" style="grid-template-columns: 1fr 1fr">
+          <div>
+            <label class="small">От</label>
+            <input v-model="fromDate" class="input" type="date" />
+          </div>
+          <div>
+            <label class="small">До</label>
+            <input v-model="toDate" class="input" type="date" />
+          </div>
         </div>
+
         <button
           class="btn"
-          @click="loadStatistics"
+          type="button"
+          @click="applyCustomPeriod"
           style="align-self: flex-end"
         >
-          🔄 Обновить
+          Показать период
         </button>
       </div>
     </article>
 
     <article class="card">
-      <h2 class="card-title">Сводка по приверженности</h2>
+      <div class="card-headline">
+        <h2 class="card-title">Приёмы лекарств</h2>
+        <span class="muted small">{{ fromDate }} → {{ toDate }}</span>
+      </div>
+
       <p v-if="loading" class="muted">Загрузка...</p>
       <p v-else-if="errorMessage" class="error-text">❌ {{ errorMessage }}</p>
-      <div v-else class="kpi-section">
-        <div class="kpi-item main">
-          <div class="kpi-value" :style="{ color: adherenceColor }">
-            {{ averageAdherence }}%
+
+      <div v-else class="chart-shell">
+        <div class="chart-summary-grid">
+          <div class="kpi-item main">
+            <div class="kpi-value" :style="{ color: adherenceColor }">
+              {{ overallAdherence }}%
+            </div>
+            <div class="kpi-label">Общая приверженность</div>
+            <div class="kpi-meta">
+              {{ totals.taken }} принято из
+              {{ totals.totalScheduled }} назначений
+            </div>
           </div>
-          <div class="kpi-label">Средняя приверженность</div>
-          <div class="kpi-meta">{{ adherence.length }} лекарств отслежено</div>
+
+          <div class="kpi-grid">
+            <div class="kpi-box">
+              <div class="kpi-number">{{ totals.taken }}</div>
+              <div class="kpi-text">Принято</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-number">{{ totals.waiting }}</div>
+              <div class="kpi-text">Ожидание</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-number">{{ totals.missed }}</div>
+              <div class="kpi-text">Пропущено</div>
+            </div>
+            <div class="kpi-box compact">
+              <div class="kpi-number">{{ trackedMedications }}</div>
+              <div class="kpi-text">Лекарств в отчёте</div>
+            </div>
+          </div>
         </div>
 
-        <div class="kpi-grid">
-          <div class="kpi-box">
-            <div class="kpi-number">{{ adherence.length }}</div>
-            <div class="kpi-text">Активных лекарств</div>
-          </div>
-          <div class="kpi-box">
-            <div class="kpi-number">
-              {{ adherence.filter((a) => a.adherencePercent >= 80).length }}
+        <div class="chart-card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <div class="chart-legend">
+              <span class="legend-item"
+                ><i class="legend-swatch taken"></i> Принято</span
+              >
+              <span class="legend-item"
+                ><i class="legend-swatch waiting"></i> Ожидание</span
+              >
+              <span class="legend-item"
+                ><i class="legend-swatch missed"></i> Пропущено</span
+              >
             </div>
-            <div class="kpi-text">Хорошая приверженность</div>
-          </div>
-          <div class="kpi-box">
-            <div class="kpi-number">
-              {{ adherence.filter((a) => a.adherencePercent < 60).length }}
+
+            <div style="display: flex; gap: 8px; align-items: center">
+              <label class="small muted" style="margin-right: 8px">Вид</label>
+              <button
+                class="btn"
+                :class="{ active: viewMode === 'daily' }"
+                @click="viewMode = 'daily'"
+              >
+                Дни
+              </button>
+              <button
+                class="btn"
+                :class="{ active: viewMode === 'medication' }"
+                @click="viewMode = 'medication'"
+              >
+                Лекарства
+              </button>
             </div>
-            <div class="kpi-text">Требует внимания</div>
+          </div>
+
+          <div v-if="chartBars.length === 0" class="empty-state">
+            <p class="muted">Нет данных для выбранного периода</p>
+          </div>
+
+          <div v-else class="chart-wrap">
+            <div class="chart-area">
+              <div class="chart-grid-lines"></div>
+              <div
+                v-for="bar in chartBars"
+                :key="bar.date || bar.medicationId || bar.tradeName"
+                class="chart-bar"
+              >
+                <div class="bar-total">{{ bar.totalScheduled }}</div>
+                <div class="bar-stack">
+                  <div
+                    v-for="segment in bar.segments"
+                    :key="segment.key"
+                    class="bar-segment"
+                    :style="{
+                      height: segment.height + '%',
+                      bottom: segment.bottom + '%',
+                      backgroundColor: segment.color,
+                    }"
+                  ></div>
+                </div>
+                <div class="bar-label">{{ bar.label }}</div>
+                <div class="bar-subtitle">{{ bar.subtitle }}</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -153,6 +574,7 @@ onMounted(() => {
               {{ item.adherencePercent.toFixed(1) }}%
             </span>
           </div>
+
           <div class="progress-bar">
             <div
               class="progress-fill"
@@ -167,6 +589,7 @@ onMounted(() => {
               }"
             ></div>
           </div>
+
           <div class="adherence-stats">
             <span>✓ Принято: {{ item.totalTaken }}</span>
             <span>Назначено: {{ item.totalScheduled }}</span>
@@ -178,18 +601,168 @@ onMounted(() => {
       </div>
     </article>
 
-    <article class="card" v-if="insights.length > 0">
-      <h2 class="card-title">Рекомендации и инсайты</h2>
-      <ul class="insights-list">
-        <li v-for="(text, idx) in insights" :key="idx" class="insight-item">
-          💡 {{ text }}
+    <article class="card">
+      <h2 class="card-title">Подсказки</h2>
+      <ul v-if="summary?.insights?.length" class="list">
+        <li
+          v-for="insight in summary.insights"
+          :key="insight"
+          class="list-item"
+        >
+          {{ insight }}
         </li>
       </ul>
+      <p v-else class="muted">Нет дополнительных подсказок</p>
     </article>
   </section>
 </template>
 
 <style scoped>
+.period-toolbar {
+  display: grid;
+  grid-template-columns: 220px 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.card-headline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.chart-shell {
+  display: grid;
+  gap: 20px;
+}
+
+.chart-summary-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.chart-card {
+  padding: 18px;
+  border: 1px solid #e4ebf7;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fbfcff 0%, #f5f8ff 100%);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #4b5970;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.legend-swatch.taken {
+  background: #27ae60;
+}
+
+.legend-swatch.waiting {
+  background: #f39c12;
+}
+
+.legend-swatch.missed {
+  background: #e74c3c;
+}
+
+.chart-wrap {
+  overflow-x: auto;
+}
+
+.chart-area {
+  position: relative;
+  min-height: 280px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(18px, 1fr);
+  gap: 8px;
+  align-items: end;
+  padding: 18px 10px 8px;
+  background-image: linear-gradient(
+    to top,
+    rgba(148, 163, 184, 0.18) 1px,
+    transparent 1px
+  );
+  background-size: 100% 25%;
+  border-radius: 14px;
+}
+
+.chart-grid-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 14px;
+}
+
+.chart-bar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: end;
+  min-width: 26px;
+  height: 100%;
+}
+
+.bar-total {
+  font-size: 11px;
+  font-weight: 700;
+  color: #41526a;
+  margin-bottom: 6px;
+  min-height: 16px;
+}
+
+.bar-stack {
+  position: relative;
+  width: 100%;
+  height: 210px;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(124, 146, 181, 0.14);
+}
+
+.bar-segment {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 8px 8px 0 0;
+  opacity: 0.95;
+}
+
+.bar-label {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #5f6f87;
+}
+
+.bar-subtitle {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #8a97aa;
+  text-align: center;
+}
+
 .kpi-section {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -204,7 +777,12 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   padding: 30px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  background: linear-gradient(
+    145deg,
+    rgba(26, 86, 219, 0.12) 0%,
+    rgba(26, 86, 219, 0.04) 100%
+  );
+  border: 1px solid rgba(26, 86, 219, 0.22);
   border-radius: 12px;
 }
 
@@ -217,12 +795,12 @@ onMounted(() => {
 .kpi-label {
   font-size: 16px;
   font-weight: 500;
-  color: #333;
+  color: #1e293b;
 }
 
 .kpi-meta {
   font-size: 13px;
-  color: #999;
+  color: #4b638e;
   margin-top: 8px;
 }
 
@@ -234,22 +812,27 @@ onMounted(() => {
 
 .kpi-box {
   padding: 16px;
-  background: #f9f9f9;
-  border: 1px solid #e0e0e0;
+  background: #f7faff;
+  border: 1px solid #d9e5ff;
   border-radius: 8px;
   text-align: center;
+}
+
+.kpi-box.compact {
+  background: #edf3ff;
+  border-color: #cfe0ff;
 }
 
 .kpi-number {
   font-size: 28px;
   font-weight: 700;
-  color: #0066cc;
+  color: #1a56db;
   margin-bottom: 4px;
 }
 
 .kpi-text {
   font-size: 13px;
-  color: #666;
+  color: #5e6e86;
 }
 
 .medications-adherence {
@@ -260,9 +843,9 @@ onMounted(() => {
 
 .adherence-item {
   padding: 16px;
-  background: #f9f9f9;
+  background: #f7faff;
   border-radius: 8px;
-  border-left: 4px solid #0066cc;
+  border-left: 4px solid #1a56db;
 }
 
 .adherence-header {
@@ -304,24 +887,6 @@ onMounted(() => {
 .empty-state {
   text-align: center;
   padding: 40px 20px;
-}
-
-.insights-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.insight-item {
-  padding: 12px;
-  background: #e7f3ff;
-  border-left: 4px solid #0066cc;
-  border-radius: 4px;
-  color: #333;
-  font-size: 14px;
 }
 
 @media (max-width: 768px) {

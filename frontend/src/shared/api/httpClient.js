@@ -86,6 +86,217 @@ function uid(prefix) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
+function parseIsoDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getIntakeStore() {
+  try {
+    const raw = localStorage.getItem("intakeStatusStore");
+    if (!raw) return { dayStatus: {}, history: [] };
+    const parsed = JSON.parse(raw);
+    return {
+      marks: parsed.marks || parsed.dayStatus || {},
+      history: parsed.history || [],
+    };
+  } catch {
+    return { marks: {}, history: [] };
+  }
+}
+
+function getDateRange(from, to) {
+  const start = parseIsoDate(from);
+  const end = parseIsoDate(to);
+  if (!start || !end) return [];
+
+  const dates = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  while (cursor <= end) {
+    dates.push(new Date(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
+}
+
+function matchesScheduleDay(date, daysOfWeek = []) {
+  if (!daysOfWeek.length) return true;
+  const jsDay = date.getDay() === 0 ? 7 : date.getDay();
+  return daysOfWeek.includes(jsDay);
+}
+
+function parseMarkKey(key) {
+  const [date, medId, scheduleId, timeOfDay] = String(key).split("::");
+  return { date, medId, scheduleId, timeOfDay };
+}
+
+function buildMarkKey(dateKey, medId, scheduleId, timeOfDay) {
+  return `${dateKey}::${medId}::${scheduleId || ""}::${String(timeOfDay || "00:00").slice(0, 5)}`;
+}
+
+function resolveMockStatus(
+  store,
+  medId,
+  scheduleId,
+  timeOfDay,
+  date,
+  scheduledAt,
+  now,
+) {
+  const dateKey = formatDateKey(date);
+  const exactKey = buildMarkKey(dateKey, medId, scheduleId, timeOfDay);
+  const timeOnlyKey = buildMarkKey(dateKey, medId, "", timeOfDay);
+  const historyEntry = (store.history || []).find(
+    (item) =>
+      item.date === dateKey &&
+      item.medId === medId &&
+      item.scheduleId === scheduleId,
+  );
+
+  const storedStatus =
+    store.marks?.[exactKey] ||
+    store.marks?.[timeOnlyKey] ||
+    historyEntry?.status;
+  if (storedStatus === "taken") return "taken";
+  if (storedStatus === "missed" || storedStatus === "skipped") return "missed";
+
+  return scheduledAt > now ? "waiting" : "missed";
+}
+
+function buildDashboardSummary(from, to) {
+  const meds = mockState.medications;
+  const store = getIntakeStore();
+  const rangeDates = getDateRange(from, to);
+  const start = parseIsoDate(from);
+  const end = parseIsoDate(to);
+  const now = new Date();
+
+  const dailySeries = rangeDates.map((date) => {
+    const dateKey = formatDateKey(date);
+    let taken = 0;
+    let waiting = 0;
+    let missed = 0;
+    let totalScheduled = 0;
+
+    for (const med of meds) {
+      for (const schedule of med.schedules || []) {
+        if (!matchesScheduleDay(date, schedule.daysOfWeek || [])) {
+          continue;
+        }
+
+        totalScheduled += 1;
+        const scheduledAt = new Date(
+          `${dateKey}T${schedule.timeOfDay || "00:00:00"}`,
+        );
+        const status = resolveMockStatus(
+          store,
+          med.id,
+          schedule.id,
+          schedule.timeOfDay,
+          date,
+          scheduledAt,
+          now,
+        );
+
+        if (status === "taken") {
+          taken += 1;
+        } else if (status === "waiting") {
+          waiting += 1;
+        } else {
+          missed += 1;
+        }
+      }
+    }
+
+    return { date: dateKey, taken, waiting, missed, totalScheduled };
+  });
+
+  return {
+    period: { from, to },
+    dailySeries,
+    adherence: meds.map((med) => {
+      const scheduledOccurrences = [];
+      for (const date of rangeDates) {
+        for (const schedule of med.schedules || []) {
+          if (matchesScheduleDay(date, schedule.daysOfWeek || [])) {
+            scheduledOccurrences.push({
+              date: formatDateKey(date),
+              scheduleId: schedule.id,
+              timeOfDay: schedule.timeOfDay || "00:00:00",
+            });
+          }
+        }
+      }
+
+      const medHistory = store.history.filter((item) => {
+        if (item.medId !== med.id) return false;
+        const itemDate = parseIsoDate(item.date);
+        if (!itemDate || !start || !end) return false;
+        itemDate.setHours(0, 0, 0, 0);
+        start.setHours(0, 0, 0, 0);
+        end.setHours(0, 0, 0, 0);
+        return itemDate >= start && itemDate <= end;
+      });
+
+      const markHistory = Object.entries(store.marks || {})
+        .map(([key, status]) => ({ ...parseMarkKey(key), status }))
+        .filter((item) => {
+          if (item.medId !== med.id) return false;
+          const itemDate = parseIsoDate(item.date);
+          if (!itemDate || !start || !end) return false;
+          itemDate.setHours(0, 0, 0, 0);
+          start.setHours(0, 0, 0, 0);
+          end.setHours(0, 0, 0, 0);
+          return itemDate >= start && itemDate <= end;
+        });
+
+      const totalScheduled = scheduledOccurrences.length;
+      const totalTaken =
+        medHistory.filter((item) => item.status === "taken").length +
+        markHistory.filter((item) => item.status === "taken").length;
+      const missedDates = [
+        ...medHistory
+          .filter(
+            (item) => item.status === "missed" || item.status === "skipped",
+          )
+          .map(
+            (item) =>
+              `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
+          ),
+        ...markHistory
+          .filter(
+            (item) => item.status === "missed" || item.status === "skipped",
+          )
+          .map(
+            (item) =>
+              `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
+          ),
+      ];
+
+      return {
+        medicationId: med.id,
+        tradeName: med.tradeName || med.customName || "Medication",
+        totalScheduled,
+        totalTaken,
+        adherencePercent:
+          totalScheduled > 0
+            ? Number(((totalTaken / totalScheduled) * 100).toFixed(2))
+            : 0,
+        missedDates,
+      };
+    }),
+  };
+}
+
 function toDashboardSummary() {
   const active = mockState.medications.filter((item) => item.isActive);
   const adherence = active.map((item) => ({
@@ -127,6 +338,30 @@ async function mockRequest(path, options = {}) {
 
   if (path === "/api/auth/logout" && method === "POST") {
     return { message: "Logged out successfully" };
+  }
+
+  if (path === "/api/auth/register" && method === "POST") {
+    const newUser = {
+      id: uid("user"),
+      email: body.email,
+      firstName: body.firstName,
+      lastName: body.lastName,
+      birthDate: body.birthDate,
+    };
+    mockState.user = newUser;
+    // Set optional profile data if provided
+    if (body.heightCm || body.weightKg || body.bloodType) {
+      mockState.profile = {
+        ...mockState.profile,
+        heightCm: body.heightCm || mockState.profile.heightCm,
+        weightKg: body.weightKg || mockState.profile.weightKg,
+        bloodType: body.bloodType || mockState.profile.bloodType,
+        diagnoses: body.diagnoses || mockState.profile.diagnoses,
+        allergies: body.allergies || mockState.profile.allergies,
+        updatedAt: now,
+      };
+    }
+    return newUser;
   }
 
   if (path === "/api/profile" && method === "GET") {
@@ -267,7 +502,10 @@ async function mockRequest(path, options = {}) {
   }
 
   if (path.startsWith("/api/dashboard/summary") && method === "GET") {
-    return toDashboardSummary();
+    const query = new URL(`http://localhost${path}`).searchParams;
+    const from = query.get("from");
+    const to = query.get("to");
+    return buildDashboardSummary(from, to);
   }
 
   // Поиск лекарств

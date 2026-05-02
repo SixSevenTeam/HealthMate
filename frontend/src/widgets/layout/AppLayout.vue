@@ -1,8 +1,10 @@
 <script setup>
 import { ref } from 'vue';
 import Icon from '@/shared/components/Icon.vue';
+import ProfileModal from '@/widgets/modals/ProfileModal.vue';
 
 const menuOpen = ref(false);
+const profileModalOpen = ref(false);
 
 const props = defineProps({
   activeView: {
@@ -32,6 +34,14 @@ function handleNavigate(id) {
 function handleLogout() {
   emit('logout');
   menuOpen.value = false;
+}
+
+function openProfileModal() {
+  profileModalOpen.value = true;
+}
+
+function closeProfileModal() {
+  profileModalOpen.value = false;
 }
 </script>
 
@@ -97,15 +107,18 @@ function handleLogout() {
           <Icon name="menu" size="20" />
         </button>
         <h1 class="top-title">{{ navItems.find((item) => item.id === props.activeView)?.label }}</h1>
-        <div class="top-user">
+        <button class="top-user" type="button" @click="openProfileModal">
           <Icon name="user" size="20" class="avatar-icon" />
           <span>{{ props.userName }}</span>
-        </div>
+        </button>
       </header>
 
       <main class="content">
         <slot />
       </main>
     </section>
+
+    <!-- Profile Modal -->
+    <ProfileModal :isOpen="profileModalOpen" @close="closeProfileModal" />
   </div>
 </template>
