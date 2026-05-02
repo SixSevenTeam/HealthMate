@@ -41,13 +41,20 @@ public class DashboardController {
         @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     public ResponseEntity<DashboardSummaryResponse> getSummary(
-        @Parameter(description = "Start date (inclusive), format: yyyy-MM-dd", example = "2026-04-01")
-        @RequestParam LocalDate from,
-        @Parameter(description = "End date (inclusive), format: yyyy-MM-dd", example = "2026-04-07")
-        @RequestParam LocalDate to) {
+        @Parameter(description = "Start date (inclusive), format: yyyy-MM-dd. Defaults to 7 days ago", example = "2026-04-01")
+        @RequestParam(required = false) LocalDate from,
+        @Parameter(description = "End date (inclusive), format: yyyy-MM-dd. Defaults to today", example = "2026-04-07")
+        @RequestParam(required = false) LocalDate to) {
+
+        LocalDate toDate = to != null ? to : LocalDate.now();
+        LocalDate fromDate = from != null ? from : toDate.minusDays(6);
+
+        if (fromDate.isAfter(toDate)) {
+            throw new IllegalArgumentException("'from' date must be less than or equal to 'to' date");
+        }
 
         UUID userId = getUserId();
-        DashboardSummaryResponse summary = dashboardService.getSummary(userId, from, to);
+        DashboardSummaryResponse summary = dashboardService.getSummary(userId, fromDate, toDate);
 
         return ResponseEntity.ok(summary);
     }

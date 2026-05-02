@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -209,6 +211,30 @@ public class MedicationsService {
     }
 
     @Transactional
+    public int markOverduePendingIntakeLogs() {
+        ZoneId zone = ZoneId.systemDefault();
+        Instant startOfToday = ZonedDateTime.now(zone)
+            .toLocalDate()
+            .atStartOfDay(zone)
+            .toInstant();
+
+        List<IntakeLog> overdueLogs = intakeLogRepository.findByStatusAndScheduledAtLessThan("pending", startOfToday);
+        if (overdueLogs.isEmpty()) {
+            return 0;
+        }
+
+        for (IntakeLog log : overdueLogs) {
+            log.setStatus("missed");
+            log.setTakenAt(null);
+            log.setConfirmedVia("system");
+        }
+
+        intakeLogRepository.saveAll(overdueLogs);
+        log.info("Marked overdue intake logs as missed: {}", overdueLogs.size());
+        return overdueLogs.size();
+    }
+
+    @Transactional
     public IntakeLog setIntakeStatus(UUID logId, UUID userId, String status) {
         IntakeLog intakeLog = intakeLogRepository.findById(logId)
             .orElseThrow(() -> new ResourceNotFoundException("Intake log not found"));
@@ -230,6 +256,68 @@ public class MedicationsService {
         IntakeLog updated = intakeLogRepository.save(intakeLog);
         log.info("Intake status updated: {} -> {}", logId, normalizedStatus);
         return updated;
+    }
+
+    @Transactional
+    public IntakeLog markIntake(UUID userMedicationId, UUID scheduleId, LocalDate date, UUID userId, String status) {
+        UserMedication medication = getUserMedication(userMedicationId, userId);
+        Schedule schedule = scheduleRepository.findById(scheduleId)
+            .orElseThrow(() -> new ResourceNotFoundException("Schedule not found"));
+
+        if (!userMedicationId.equals(schedule.getUserMedicationId())) {
+            throw new ResourceNotFoundException("Schedule not found");
+        }
+
+        String normalizedStatus = status == null ? "" : status.trim().toLowerCase();
+        if (!ALLOWED_MANUAL_STATUSES.contains(normalizedStatus)) {
+            throw new IllegalArgumentException("Allowed statuses: taken, missed, skipped");
+        }
+
+        ZoneId zone = ZoneId.systemDefault();
+        Instant scheduledAt = date.atTime(schedule.getTimeOfDay()).atZone(zone).toInstant();
+
+        IntakeLog intakeLog = intakeLogRepository.findFirstByUserMedicationIdAndScheduledAtOrderByCreatedAtDesc(userMedicationId, scheduledAt)
+            .orElseGet(() -> IntakeLog.builder()
+                .userMedicationId(medication.getId())
+                .scheduledAt(scheduledAt)
+                .build());
+
+        intakeLog.setStatus(normalizedStatus);
+        if ("taken".equals(normalizedStatus)) {
+            intakeLog.setTakenAt(Instant.now());
+        } else {
+            intakeLog.setTakenAt(null);
+        }
+        intakeLog.setConfirmedVia("app");
+
+        try {
+            IntakeLog updated = intakeLogRepository.save(intakeLog);
+            log.info("Intake marked: medication={} schedule={} date={} status={}", userMedicationId, scheduleId, date, normalizedStatus);
+            return updated;
+        } catch (DataIntegrityViolationException ex) {
+            // Handle races/constraint conflicts by reloading latest row and applying status update.
+            IntakeLog existing = intakeLogRepository
+                .findFirstByUserMedicationIdAndScheduledAtOrderByCreatedAtDesc(userMedicationId, scheduledAt)
+                .orElseThrow(() -> ex);
+
+            existing.setStatus(normalizedStatus);
+            if ("taken".equals(normalizedStatus)) {
+                existing.setTakenAt(Instant.now());
+            } else {
+                existing.setTakenAt(null);
+            }
+            existing.setConfirmedVia("app");
+
+            IntakeLog updated = intakeLogRepository.save(existing);
+            log.warn(
+                "Intake mark conflict resolved by retry: medication={} schedule={} date={} status={}",
+                userMedicationId,
+                scheduleId,
+                date,
+                normalizedStatus
+            );
+            return updated;
+        }
     }
 
     @Transactional
@@ -412,16 +500,9 @@ public class MedicationsService {
         if (raw.isAbsolute()) {
             candidates.add(raw.toAbsolutePath().normalize());
         } else {
-            candidates.add(cwd.resolve(raw).normalize());
-
-            Path current = cwd.getParent();
-            while (current != null) {
-                candidates.add(current.resolve(raw).normalize());
-                current = current.getParent();
-            }
-
-            candidates.add(resolveRelativeToDatasetRoot(root, raw));
             candidates.add(root.resolve(raw).normalize());
+            candidates.add(cwd.resolve(raw).normalize());
+            candidates.add(cwd.resolve("..").resolve(raw).normalize());
         }
 
         Path firstSafe = null;
@@ -444,44 +525,6 @@ public class MedicationsService {
         }
 
         throw new ResourceNotFoundException("Drug file not found");
-    }
-
-    private Path resolveRelativeToDatasetRoot(Path root, Path storedPath) {
-        List<String> rootSegments = toSegments(root);
-        List<String> storedSegments = toSegments(storedPath);
-
-        for (int overlap = Math.min(rootSegments.size(), storedSegments.size()); overlap > 0; overlap--) {
-            List<String> rootSuffix = rootSegments.subList(rootSegments.size() - overlap, rootSegments.size());
-            List<String> storedPrefix = storedSegments.subList(0, overlap);
-            if (!rootSuffix.equals(storedPrefix)) {
-                continue;
-            }
-
-            Path remainder = segmentsToPath(storedSegments.subList(overlap, storedSegments.size()));
-            return root.resolve(remainder).normalize();
-        }
-
-        return root.resolve(storedPath).normalize();
-    }
-
-    private List<String> toSegments(Path path) {
-        List<String> segments = new ArrayList<>();
-        for (Path segment : path) {
-            segments.add(segment.toString());
-        }
-        return segments;
-    }
-
-    private Path segmentsToPath(List<String> segments) {
-        if (segments.isEmpty()) {
-            return Paths.get("");
-        }
-
-        Path result = Paths.get(segments.get(0));
-        for (int index = 1; index < segments.size(); index++) {
-            result = result.resolve(segments.get(index));
-        }
-        return result;
     }
 
     public record DrugImagePayload(Resource image, String contentType) {

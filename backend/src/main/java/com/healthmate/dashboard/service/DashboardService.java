@@ -2,10 +2,13 @@ package com.healthmate.dashboard.service;
 
 import com.healthmate.medications.entity.Drug;
 import com.healthmate.medications.entity.IntakeLog;
+import com.healthmate.medications.entity.Schedule;
 import com.healthmate.medications.entity.UserMedication;
 import com.healthmate.medications.repository.DrugRepository;
 import com.healthmate.medications.repository.IntakeLogRepository;
+import com.healthmate.medications.repository.ScheduleRepository;
 import com.healthmate.medications.repository.UserMedicationRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -18,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,15 +29,18 @@ public class DashboardService {
 
     private final IntakeLogRepository intakeLogRepository;
     private final UserMedicationRepository userMedicationRepository;
+    private final ScheduleRepository scheduleRepository;
     private final DrugRepository drugRepository;
 
     public DashboardService(
         IntakeLogRepository intakeLogRepository,
         UserMedicationRepository userMedicationRepository,
+        ScheduleRepository scheduleRepository,
         DrugRepository drugRepository
     ) {
         this.intakeLogRepository = intakeLogRepository;
         this.userMedicationRepository = userMedicationRepository;
+        this.scheduleRepository = scheduleRepository;
         this.drugRepository = drugRepository;
     }
 
@@ -48,13 +55,15 @@ public class DashboardService {
         ZoneId zone = ZoneId.systemDefault();
         Instant fromInstant = from.atStartOfDay(zone).toInstant();
         Instant toInstant = to.atStartOfDay(zone).plusDays(1).toInstant();
+        Instant now = Instant.now();
 
-        List<UserMedication> userMedications = userMedicationRepository.findByUserIdAndIsActive(userId, true);
+        List<UserMedication> userMedications = userMedicationRepository.findByUserId(userId, Pageable.unpaged()).getContent();
         if (userMedications.isEmpty()) {
             return DashboardSummaryResponse.builder()
                 .period(new DashboardSummaryResponse.PeriodDTO(from, to))
                 .adherence(List.of())
-                .insights(List.of("No active medications for selected period."))
+                .dailySeries(buildEmptyDailySeries(from, to))
+                .insights(List.of("No medications for selected period."))
                 .build();
         }
 
@@ -62,14 +71,94 @@ public class DashboardService {
             .map(UserMedication::getId)
             .toList();
 
+        Map<UUID, List<Schedule>> schedulesByMedication = userMedications.stream()
+            .collect(Collectors.toMap(
+                UserMedication::getId,
+                medication -> scheduleRepository.findByUserMedicationId(medication.getId()),
+                (left, right) -> left,
+                LinkedHashMap::new
+            ));
+
+        boolean hasAnySchedule = schedulesByMedication.values().stream().anyMatch(list -> list != null && !list.isEmpty());
+
         List<IntakeLog> logs = intakeLogRepository.findByUserMedicationIdInAndScheduledAtGreaterThanEqualAndScheduledAtLessThan(
             medicationIds,
             fromInstant,
             toInstant
         );
 
-        Map<UUID, List<IntakeLog>> logsByMedication = logs.stream()
-            .collect(Collectors.groupingBy(IntakeLog::getUserMedicationId));
+        if (!hasAnySchedule && !logs.isEmpty()) {
+            return buildSummaryFromLogsOnly(userMedications, logs, from, to, now, zone);
+        }
+
+        Map<UUID, Map<Instant, IntakeLog>> logsByMedicationAndInstant = logs.stream()
+            .collect(Collectors.groupingBy(
+                IntakeLog::getUserMedicationId,
+                LinkedHashMap::new,
+                Collectors.toMap(
+                    IntakeLog::getScheduledAt,
+                    Function.identity(),
+                    (left, right) -> left,
+                    LinkedHashMap::new
+                )
+            ));
+
+        Map<UUID, MedicationStats> medicationStats = new LinkedHashMap<>();
+        for (UserMedication medication : userMedications) {
+            medicationStats.put(medication.getId(), new MedicationStats());
+        }
+
+        List<DashboardSummaryResponse.DailySeriesDTO> dailySeries = new ArrayList<>();
+        for (LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            DailyStats dailyStats = new DailyStats();
+
+            for (UserMedication medication : userMedications) {
+                MedicationStats stats = medicationStats.get(medication.getId());
+                List<Schedule> schedules = schedulesByMedication.getOrDefault(medication.getId(), List.of());
+
+                for (Schedule schedule : schedules) {
+                    if (!isScheduledDay(day, schedule.getDaysOfWeek())) {
+                        continue;
+                    }
+
+                    Instant scheduledAt = day.atTime(schedule.getTimeOfDay()).atZone(zone).toInstant();
+                    if (scheduledAt.isBefore(fromInstant) || !scheduledAt.isBefore(toInstant)) {
+                        continue;
+                    }
+
+                    // Do not count future expected doses for inactive medications
+                    if (!Boolean.TRUE.equals(medication.getIsActive()) && scheduledAt.isAfter(now)) {
+                        continue;
+                    }
+
+                    stats.totalScheduled++;
+                    dailyStats.totalScheduled++;
+
+                    IntakeLog log = logsByMedicationAndInstant
+                        .getOrDefault(medication.getId(), Map.of())
+                        .get(scheduledAt);
+
+                    String status = resolveStatus(log, scheduledAt, now);
+                    if ("taken".equals(status)) {
+                        stats.totalTaken++;
+                        dailyStats.taken++;
+                    } else if ("waiting".equals(status)) {
+                        dailyStats.waiting++;
+                    } else {
+                        stats.missedDates.add(day.toString());
+                        dailyStats.missed++;
+                    }
+                }
+            }
+
+            dailySeries.add(new DashboardSummaryResponse.DailySeriesDTO(
+                day,
+                dailyStats.taken,
+                dailyStats.waiting,
+                dailyStats.missed,
+                dailyStats.totalScheduled
+            ));
+        }
 
         Map<UUID, Drug> drugsById = drugRepository.findAllById(
                 userMedications.stream()
@@ -82,20 +171,12 @@ public class DashboardService {
 
         List<DashboardSummaryResponse.AdherenceDTO> adherence = new ArrayList<>();
         for (UserMedication medication : userMedications) {
-            List<IntakeLog> medicationLogs = logsByMedication.getOrDefault(medication.getId(), List.of());
-
-            int totalScheduled = medicationLogs.size();
-            int totalTaken = (int) medicationLogs.stream().filter(this::isTaken).count();
+            MedicationStats stats = medicationStats.get(medication.getId());
+            int totalScheduled = stats.totalScheduled;
+            int totalTaken = stats.totalTaken;
             double adherencePercent = totalScheduled == 0
                 ? 0.0
                 : round2(totalTaken * 100.0 / totalScheduled);
-
-            List<String> missedDates = medicationLogs.stream()
-                .filter(log -> !isTaken(log))
-                .map(log -> LocalDate.ofInstant(log.getScheduledAt(), zone).toString())
-                .distinct()
-                .sorted()
-                .toList();
 
             adherence.add(new DashboardSummaryResponse.AdherenceDTO(
                 medication.getId().toString(),
@@ -103,7 +184,7 @@ public class DashboardService {
                 totalScheduled,
                 totalTaken,
                 adherencePercent,
-                missedDates
+                stats.missedDates.stream().distinct().sorted().toList()
             ));
         }
 
@@ -114,12 +195,142 @@ public class DashboardService {
         return DashboardSummaryResponse.builder()
             .period(new DashboardSummaryResponse.PeriodDTO(from, to))
             .adherence(adherence)
+            .dailySeries(dailySeries)
             .insights(insights)
             .build();
     }
 
-    private boolean isTaken(IntakeLog log) {
-        return "taken".equalsIgnoreCase(log.getStatus()) && log.getTakenAt() != null;
+    private boolean isScheduledDay(LocalDate date, Integer[] daysOfWeek) {
+        if (daysOfWeek == null || daysOfWeek.length == 0) {
+            return true;
+        }
+
+        int dayOfWeek = date.getDayOfWeek().getValue();
+        for (Integer day : daysOfWeek) {
+            if (day != null && day == dayOfWeek) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private String resolveStatus(IntakeLog log, Instant scheduledAt, Instant now) {
+        if (log != null) {
+            String status = log.getStatus() == null ? "" : log.getStatus().trim().toLowerCase();
+            if ("taken".equals(status)) {
+                return "taken";
+            }
+            if ("missed".equals(status) || "skipped".equals(status)) {
+                return "missed";
+            }
+        }
+
+        return scheduledAt.isAfter(now) ? "waiting" : "missed";
+    }
+
+    private DashboardSummaryResponse buildSummaryFromLogsOnly(
+        List<UserMedication> userMedications,
+        List<IntakeLog> logs,
+        LocalDate from,
+        LocalDate to,
+        Instant now,
+        ZoneId zone
+    ) {
+        Map<UUID, List<IntakeLog>> logsByMedication = logs.stream()
+            .collect(Collectors.groupingBy(IntakeLog::getUserMedicationId, LinkedHashMap::new, Collectors.toList()));
+
+        Map<LocalDate, DailyStats> dailyStatsByDate = new LinkedHashMap<>();
+        for (LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            dailyStatsByDate.put(day, new DailyStats());
+        }
+
+        Map<UUID, MedicationStats> medicationStats = new LinkedHashMap<>();
+        for (UserMedication medication : userMedications) {
+            medicationStats.put(medication.getId(), new MedicationStats());
+        }
+
+        for (IntakeLog log : logs) {
+            LocalDate day = log.getScheduledAt().atZone(zone).toLocalDate();
+            DailyStats dailyStats = dailyStatsByDate.get(day);
+            if (dailyStats == null) {
+                continue;
+            }
+
+            MedicationStats stats = medicationStats.get(log.getUserMedicationId());
+            if (stats == null) {
+                continue;
+            }
+
+            String status = resolveStatus(log, log.getScheduledAt(), now);
+            dailyStats.totalScheduled++;
+            stats.totalScheduled++;
+
+            if ("taken".equals(status)) {
+                dailyStats.taken++;
+                stats.totalTaken++;
+            } else if ("waiting".equals(status)) {
+                dailyStats.waiting++;
+            } else {
+                dailyStats.missed++;
+                stats.missedDates.add(day.toString());
+            }
+        }
+
+        List<DashboardSummaryResponse.DailySeriesDTO> dailySeries = dailyStatsByDate.entrySet().stream()
+            .map(entry -> new DashboardSummaryResponse.DailySeriesDTO(
+                entry.getKey(),
+                entry.getValue().taken,
+                entry.getValue().waiting,
+                entry.getValue().missed,
+                entry.getValue().totalScheduled
+            ))
+            .toList();
+
+        Map<UUID, Drug> drugsById = drugRepository.findAllById(
+                userMedications.stream()
+                    .map(UserMedication::getDrugId)
+                    .filter(Objects::nonNull)
+                    .toList()
+            )
+            .stream()
+            .collect(Collectors.toMap(Drug::getId, d -> d, (left, right) -> left, LinkedHashMap::new));
+
+        List<DashboardSummaryResponse.AdherenceDTO> adherence = new ArrayList<>();
+        for (UserMedication medication : userMedications) {
+            MedicationStats stats = medicationStats.get(medication.getId());
+            int totalScheduled = stats.totalScheduled;
+            int totalTaken = stats.totalTaken;
+            double adherencePercent = totalScheduled == 0
+                ? 0.0
+                : round2(totalTaken * 100.0 / totalScheduled);
+
+            adherence.add(new DashboardSummaryResponse.AdherenceDTO(
+                medication.getId().toString(),
+                resolveTradeName(medication, drugsById),
+                totalScheduled,
+                totalTaken,
+                adherencePercent,
+                stats.missedDates.stream().distinct().sorted().toList()
+            ));
+        }
+
+        adherence.sort(Comparator.comparing(DashboardSummaryResponse.AdherenceDTO::getTradeName, String.CASE_INSENSITIVE_ORDER));
+
+        return DashboardSummaryResponse.builder()
+            .period(new DashboardSummaryResponse.PeriodDTO(from, to))
+            .adherence(adherence)
+            .dailySeries(dailySeries)
+            .insights(buildInsights(adherence))
+            .build();
+    }
+
+    private List<DashboardSummaryResponse.DailySeriesDTO> buildEmptyDailySeries(LocalDate from, LocalDate to) {
+        List<DashboardSummaryResponse.DailySeriesDTO> series = new ArrayList<>();
+        for (LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
+            series.add(new DashboardSummaryResponse.DailySeriesDTO(day, 0, 0, 0, 0));
+        }
+        return series;
     }
 
     private String resolveTradeName(UserMedication medication, Map<UUID, Drug> drugsById) {
@@ -175,5 +386,18 @@ public class DashboardService {
 
     private double round2(double value) {
         return Math.round(value * 100.0) / 100.0;
+    }
+
+    private static class MedicationStats {
+        private int totalScheduled;
+        private int totalTaken;
+        private final List<String> missedDates = new ArrayList<>();
+    }
+
+    private static class DailyStats {
+        private int taken;
+        private int waiting;
+        private int missed;
+        private int totalScheduled;
     }
 }
