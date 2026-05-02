@@ -139,16 +139,91 @@ function parseMarkKey(key) {
   return { date, medId, scheduleId, timeOfDay };
 }
 
+function buildMarkKey(dateKey, medId, scheduleId, timeOfDay) {
+  return `${dateKey}::${medId}::${scheduleId || ""}::${String(timeOfDay || "00:00").slice(0, 5)}`;
+}
+
+function resolveMockStatus(
+  store,
+  medId,
+  scheduleId,
+  timeOfDay,
+  date,
+  scheduledAt,
+  now,
+) {
+  const dateKey = formatDateKey(date);
+  const exactKey = buildMarkKey(dateKey, medId, scheduleId, timeOfDay);
+  const timeOnlyKey = buildMarkKey(dateKey, medId, "", timeOfDay);
+  const historyEntry = (store.history || []).find(
+    (item) =>
+      item.date === dateKey &&
+      item.medId === medId &&
+      item.scheduleId === scheduleId,
+  );
+
+  const storedStatus =
+    store.marks?.[exactKey] ||
+    store.marks?.[timeOnlyKey] ||
+    historyEntry?.status;
+  if (storedStatus === "taken") return "taken";
+  if (storedStatus === "missed" || storedStatus === "skipped") return "missed";
+
+  return scheduledAt > now ? "waiting" : "missed";
+}
+
 function buildDashboardSummary(from, to) {
-  const active = mockState.medications.filter((item) => item.isActive);
+  const meds = mockState.medications;
   const store = getIntakeStore();
   const rangeDates = getDateRange(from, to);
   const start = parseIsoDate(from);
   const end = parseIsoDate(to);
+  const now = new Date();
+
+  const dailySeries = rangeDates.map((date) => {
+    const dateKey = formatDateKey(date);
+    let taken = 0;
+    let waiting = 0;
+    let missed = 0;
+    let totalScheduled = 0;
+
+    for (const med of meds) {
+      for (const schedule of med.schedules || []) {
+        if (!matchesScheduleDay(date, schedule.daysOfWeek || [])) {
+          continue;
+        }
+
+        totalScheduled += 1;
+        const scheduledAt = new Date(
+          `${dateKey}T${schedule.timeOfDay || "00:00:00"}`,
+        );
+        const status = resolveMockStatus(
+          store,
+          med.id,
+          schedule.id,
+          schedule.timeOfDay,
+          date,
+          scheduledAt,
+          now,
+        );
+
+        if (status === "taken") {
+          taken += 1;
+        } else if (status === "waiting") {
+          waiting += 1;
+        } else {
+          missed += 1;
+        }
+      }
+    }
+
+    return { date: dateKey, taken, waiting, missed, totalScheduled };
+  });
 
   return {
     period: { from, to },
-    adherence: active.map((med) => {
+    dailySeries,
+    adherence: meds.map((med) => {
       const scheduledOccurrences = [];
       for (const date of rangeDates) {
         for (const schedule of med.schedules || []) {
@@ -185,14 +260,26 @@ function buildDashboardSummary(from, to) {
         });
 
       const totalScheduled = scheduledOccurrences.length;
-      const totalTaken = medHistory.filter((item) => item.status === "taken").length + markHistory.filter((item) => item.status === "taken").length;
+      const totalTaken =
+        medHistory.filter((item) => item.status === "taken").length +
+        markHistory.filter((item) => item.status === "taken").length;
       const missedDates = [
         ...medHistory
-          .filter((item) => item.status === "missed" || item.status === "skipped")
-          .map((item) => `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`),
+          .filter(
+            (item) => item.status === "missed" || item.status === "skipped",
+          )
+          .map(
+            (item) =>
+              `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
+          ),
         ...markHistory
-          .filter((item) => item.status === "missed" || item.status === "skipped")
-          .map((item) => `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`),
+          .filter(
+            (item) => item.status === "missed" || item.status === "skipped",
+          )
+          .map(
+            (item) =>
+              `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
+          ),
       ];
 
       return {
@@ -200,7 +287,10 @@ function buildDashboardSummary(from, to) {
         tradeName: med.tradeName || med.customName || "Medication",
         totalScheduled,
         totalTaken,
-        adherencePercent: totalScheduled > 0 ? Number(((totalTaken / totalScheduled) * 100).toFixed(2)) : 0,
+        adherencePercent:
+          totalScheduled > 0
+            ? Number(((totalTaken / totalScheduled) * 100).toFixed(2))
+            : 0,
         missedDates,
       };
     }),

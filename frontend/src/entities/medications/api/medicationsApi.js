@@ -68,3 +68,10 @@ export function updateIntakeStatus(logId, status) {
     body: JSON.stringify({ status }),
   });
 }
+
+export function markIntakeByDate(medicationId, payload) {
+  return httpRequest(`/api/medications/${medicationId}/intake-logs/mark`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
