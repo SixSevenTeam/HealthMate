@@ -54,6 +54,13 @@ public class DrugsController {
         return ResponseEntity.ok(DrugSearchResponse.builder().results(items).build());
     }
 
+    @GetMapping("/mappings")
+    @Operation(summary = "Get all drug mappings", description = "Returns list of drug id and source paths for indexing")
+    public ResponseEntity<java.util.List<com.healthmate.medications.dto.DrugMappingResponse>> getAllMappings() {
+        var list = medicationsService.getAllDrugMappings();
+        return ResponseEntity.ok(list);
+    }
+
     @GetMapping(value = "/{drugId}/details", produces = MediaType.TEXT_HTML_VALUE)
     @Operation(summary = "Get drug details HTML", description = "Returns full HTML page for selected drug")
     @ApiResponses(value = {
@@ -66,6 +73,26 @@ public class DrugsController {
         return ResponseEntity.ok()
             .contentType(MediaType.TEXT_HTML)
             .body(html);
+    }
+
+    @GetMapping(value = "/{drugId}")
+    @Operation(summary = "Get drug metadata", description = "Returns JSON metadata for a drug by id")
+    public ResponseEntity<DrugSearchResponse.DrugSearchItem> getDrugMetadata(@PathVariable UUID drugId) {
+        var d = medicationsService.getDrugById(drugId);
+
+        DrugSearchResponse.DrugSearchItem item = DrugSearchResponse.DrugSearchItem.builder()
+            .id(d.getId())
+            .tradeName(d.getTradeName())
+            .internationalName(d.getInternationalName())
+            .atxCode(d.getAtxCode())
+            .doseUnit(d.getDoseUnit())
+            .minDose(d.getMinDose())
+            .maxDose(d.getMaxDose())
+            .isInRag(d.getIsInRag())
+            .hasMedia(d.getPackImagePath() != null && !d.getPackImagePath().isBlank())
+            .build();
+
+        return ResponseEntity.ok(item);
     }
 
     @GetMapping("/{drugId}/pack-image")

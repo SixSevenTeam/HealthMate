@@ -31,6 +31,9 @@ public class IntakeLog {
     @Column(name = "taken_at")
     private Instant takenAt;
 
+    @Column(name = "marked_at")
+    private Instant markedAt;
+
     @Column(nullable = false)
     @Builder.Default
     private String status = "pending";

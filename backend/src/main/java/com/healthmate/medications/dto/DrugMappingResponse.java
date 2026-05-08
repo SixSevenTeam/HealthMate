@@ -5,18 +5,14 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.Instant;
 import java.util.UUID;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class IntakeLogResponse {
+public class DrugMappingResponse {
     private UUID id;
-    private Instant scheduledAt;
-    private Instant takenAt;
-    private Instant markedAt;
-    private String status;
-    private String confirmedVia;
+    private String sourceFile;
+    private String detailsHtmlPath;
 }
