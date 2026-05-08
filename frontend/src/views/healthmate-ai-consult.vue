@@ -20,10 +20,36 @@ const messagesContainer = ref(null);
 const newConvTitle = ref("");
 const showNewConvForm = ref(false);
 const showDeleteModal = ref(false);
+const guidedState = ref(null);
 
 const selectedConversation = computed(() =>
   conversations.value.find((c) => c.id === selectedConversationId.value),
 );
+
+const guidedQuestion = computed(
+  () => guidedState.value?.currentQuestion || null,
+);
+
+const guidedIsFinalStep = computed(() => {
+  if (!guidedState.value) return false;
+  const { questionsAsked, maxQuestions } = guidedState.value;
+  return Boolean(
+    typeof questionsAsked === "number" &&
+    typeof maxQuestions === "number" &&
+    questionsAsked >= maxQuestions,
+  );
+});
+
+const inputPlaceholder = computed(() =>
+  guidedQuestion.value
+    ? "Выберите вариант или напишите свой ответ..."
+    : "Опишите ваши симптомы или задайте вопрос...",
+);
+
+function syncGuidedStateFromConversation() {
+  const state = selectedConversation.value?.anamnesisState || null;
+  guidedState.value = state && state.stage === "collecting" ? state : null;
+}
 
 async function loadConversations() {
   loading.value = true;
@@ -41,6 +67,8 @@ async function loadConversations() {
       conversations.value.unshift(created);
       selectedConversationId.value = created.id;
     }
+
+    syncGuidedStateFromConversation();
   } catch (error) {
     errorMessage.value = error.message || "Не удалось загрузить диалоги";
   } finally {
@@ -48,7 +76,7 @@ async function loadConversations() {
   }
 }
 
-async function loadMessages() {
+async function loadMessages(syncState = true) {
   if (!selectedConversationId.value) {
     return;
   }
@@ -59,6 +87,9 @@ async function loadMessages() {
     );
     await nextTick();
     scrollToBottom();
+    if (syncState) {
+      syncGuidedStateFromConversation();
+    }
   } catch (error) {
     errorMessage.value = error.message || "Не удалось получить сообщения";
   }
@@ -79,16 +110,43 @@ async function submitMessage() {
   errorMessage.value = "";
   const userPrompt = prompt.value.trim();
   prompt.value = "";
+  const userMessage = {
+    id: `local-user-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    conversationId: selectedConversationId.value,
+    role: "user",
+    content: userPrompt,
+    createdAt: new Date().toISOString(),
+  };
+  messages.value.push(userMessage);
+
+  const shouldShowRecommendationPending = guidedIsFinalStep.value;
+  let pendingAssistantIndex = -1;
+
+  if (shouldShowRecommendationPending) {
+    pendingAssistantIndex =
+      messages.value.push({
+        id: `pending-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        conversationId: selectedConversationId.value,
+        role: "assistant",
+        content: "Готовлю рекомендации для вас!",
+        createdAt: new Date().toISOString(),
+        pending: true,
+      }) - 1;
+    await nextTick();
+    scrollToBottom();
+  }
 
   try {
     const result = await sendMessage(selectedConversationId.value, userPrompt);
-    messages.value.push(result.userMessage);
-    messages.value.push(result.assistantMessage);
-    await nextTick();
-    scrollToBottom();
+    guidedState.value = result.anamnesisState || null;
+
+    await loadMessages(false);
   } catch (error) {
     errorMessage.value = error.message || "Ошибка отправки сообщения";
     prompt.value = userPrompt;
+    if (pendingAssistantIndex >= 0) {
+      messages.value.splice(pendingAssistantIndex, 1);
+    }
   } finally {
     sending.value = false;
   }
@@ -136,6 +194,12 @@ function requestDeleteConversation() {
 
 function closeDeleteModal() {
   showDeleteModal.value = false;
+}
+
+function pickGuidedOption(optionValue) {
+  if (sending.value) return;
+  prompt.value = optionValue;
+  submitMessage();
 }
 
 watch(selectedConversationId, loadMessages);
@@ -222,6 +286,29 @@ onMounted(loadConversations);
 
       <p v-if="errorMessage" class="error-text">❌ {{ errorMessage }}</p>
 
+      <div v-if="guidedQuestion" class="anamnesis-panel">
+        <div class="anamnesis-badge">Этап анамнеза</div>
+        <h3 class="anamnesis-question">{{ guidedQuestion.question }}</h3>
+        <div class="anamnesis-options">
+          <button
+            v-for="option in guidedQuestion.answerOptions"
+            :key="option.value"
+            type="button"
+            class="anamnesis-option"
+            :disabled="sending"
+            @click="pickGuidedOption(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+        <p
+          v-if="guidedQuestion.allowFreeText"
+          class="small muted anamnesis-hint"
+        >
+          Можно выбрать вариант выше или написать свой ответ в поле ниже.
+        </p>
+      </div>
+
       <div class="message-list" ref="messagesContainer">
         <div v-if="messages.length === 0" class="empty-state">
           <p class="muted">
@@ -237,7 +324,12 @@ onMounted(loadConversations);
           <div class="message-role">
             {{ msg.role === "user" ? "👤 Вы" : "🤖 AI" }}
           </div>
-          <p class="message-text">{{ msg.content }}</p>
+          <div
+            v-if="msg.role === 'assistant'"
+            class="message-text message-html"
+            v-html="msg.content"
+          ></div>
+          <p v-else class="message-text">{{ msg.content }}</p>
           <span class="message-time">
             {{
               new Date(msg.createdAt).toLocaleTimeString("ru-RU", {
@@ -253,7 +345,7 @@ onMounted(loadConversations);
         <input
           v-model="prompt"
           class="input"
-          placeholder="Опишите ваши симптомы или задайте вопрос..."
+          :placeholder="inputPlaceholder"
           @keydown.enter="submitMessage"
           :disabled="sending"
         />
@@ -265,7 +357,11 @@ onMounted(loadConversations);
           aria-label="Отправить сообщение"
           :title="sending ? 'Отправка...' : 'Отправить сообщение'"
         >
-          <Icon name="chatSend" :size="22" className="icon-btn-mark send-icon-flip" />
+          <Icon
+            name="chatSend"
+            :size="22"
+            className="icon-btn-mark send-icon-flip"
+          />
         </button>
       </div>
     </article>
@@ -301,7 +397,11 @@ onMounted(loadConversations);
         <button type="button" class="btn secondary" @click="closeDeleteModal">
           Отмена
         </button>
-        <button type="button" class="btn danger" @click="deleteCurrentConversation">
+        <button
+          type="button"
+          class="btn danger"
+          @click="deleteCurrentConversation"
+        >
           Удалить
         </button>
       </div>
@@ -393,6 +493,70 @@ onMounted(loadConversations);
   overflow: hidden;
 }
 
+.anamnesis-panel {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 14px;
+  background: linear-gradient(
+    180deg,
+    rgba(239, 246, 255, 0.96),
+    rgba(255, 255, 255, 1)
+  );
+}
+
+.anamnesis-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.anamnesis-question {
+  margin: 0 0 10px;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.anamnesis-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.anamnesis-option {
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  background: #fff;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.anamnesis-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.08);
+}
+
+.anamnesis-option:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.anamnesis-hint {
+  margin-top: 10px;
+}
+
 .chat-header {
   display: flex;
   justify-content: space-between;
@@ -450,6 +614,45 @@ onMounted(loadConversations);
 .message-text {
   margin: 0;
   word-wrap: break-word;
+}
+
+.message-html :deep(p) {
+  margin: 0 0 0.75rem;
+}
+
+.message-html :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-html :deep(h1),
+.message-html :deep(h2),
+.message-html :deep(h3) {
+  margin: 0.7rem 0 0.5rem;
+  line-height: 1.25;
+}
+
+.message-html :deep(ul),
+.message-html :deep(ol) {
+  margin: 0.5rem 0;
+  padding-left: 1.2rem;
+}
+
+.message-html :deep(li) {
+  margin: 0.25rem 0;
+}
+
+.message-html :deep(a) {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.message-html :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-top: 0.75rem;
+  border-radius: 10px;
 }
 
 .message-time {
