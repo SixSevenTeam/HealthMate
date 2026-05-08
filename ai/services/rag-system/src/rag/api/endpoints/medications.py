@@ -11,10 +11,12 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from rag.medical.safety_checker import SafetyChecker, get_safety_checker
-from rag.domain.events import Medication
+from rag.core.llm_client import get_llm_client
+from rag.core.config import settings
+from rag.medical.drugs_client import get_drug_by_id
+import json
 
 log = structlog.get_logger()
 
@@ -57,6 +59,10 @@ class MedValidationUserContext(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class _EmptyUserContext(MedValidationUserContext):
+    userId: str = "unknown"
+
+
 class CandidateMedication(BaseModel):
     drugId: str | None = Field(default=None, alias="drugId")
     customName: str | None = Field(default=None, alias="customName")
@@ -70,10 +76,88 @@ class CandidateMedication(BaseModel):
 
 class MedicationSafetyRequest(BaseModel):
     """Запрос на валидацию лекарства (контракт Васе)."""
-    userId: str = Field(alias="userId")
-    userContext: MedValidationUserContext = Field(alias="userContext")
-    candidateMedication: CandidateMedication = Field(alias="candidateMedication")
+    userId: str = Field(default="unknown", alias="userId")
+    userContext: MedValidationUserContext = Field(
+        default_factory=_EmptyUserContext, alias="userContext"
+    )
+    candidateMedication: CandidateMedication = Field(
+        default_factory=CandidateMedication, alias="candidateMedication"
+    )
     model_config = {"populate_by_name": True}
+
+    @staticmethod
+    def _coerce_date_value(value: Any) -> Any:
+        if isinstance(value, (list, tuple)) and len(value) >= 3:
+            year, month, day = value[0], value[1], value[2]
+            try:
+                return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+            except Exception:
+                return value
+        return value
+
+    @classmethod
+    def _normalize_nested_dates(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        candidate = normalized.get("candidateMedication")
+        if isinstance(candidate, dict):
+            candidate = dict(candidate)
+            candidate["startDate"] = cls._coerce_date_value(candidate.get("startDate"))
+            candidate["endDate"] = cls._coerce_date_value(candidate.get("endDate"))
+            normalized["candidateMedication"] = candidate
+
+        user_context = normalized.get("userContext")
+        if isinstance(user_context, dict):
+            user_context = dict(user_context)
+            user_context["birthDate"] = cls._coerce_date_value(user_context.get("birthDate"))
+            normalized["userContext"] = user_context
+
+        return normalized
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_flat_payload(cls, data: Any) -> Any:
+        """Поддерживает старый плоский payload из фронта без 422.
+
+        Если фронт шлёт поля `customName`, `drugId`, `doseAmount` и т.д.
+        на верхнем уровне, собираем из них структурированный контракт.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        data = cls._normalize_nested_dates(data)
+
+        if "candidateMedication" not in data:
+            candidate_source = {
+                "drugId": data.get("drugId"),
+                "customName": data.get("customName"),
+                "doseAmount": data.get("doseAmount"),
+                "doseUnit": data.get("doseUnit"),
+                "instructions": data.get("instructions"),
+                "startDate": data.get("startDate"),
+                "endDate": data.get("endDate"),
+            }
+            data = {**data, "candidateMedication": candidate_source}
+
+        if "userContext" not in data:
+            data = {
+                **data,
+                "userContext": {
+                    "userId": data.get("userId") or "unknown",
+                    "diagnoses": [],
+                    "allergies": [],
+                    "contextDegraded": True,
+                    "contextWarnings": ["legacy_flat_payload"],
+                    "activeMedications": [],
+                },
+            }
+
+        if not data.get("userId"):
+            data["userId"] = data.get("userContext", {}).get("userId") or "unknown"
+
+        return data
 
 
 # ── Модели ответа (контракт Васе) ───────────────────────────────────────────
@@ -99,9 +183,15 @@ class MedicationSafetyResponse(BaseModel):
     status_code=status.HTTP_200_OK,
 )
 async def validate_medication(
-    request: MedicationSafetyRequest,
+    request: dict[str, Any],
 ) -> MedicationSafetyResponse:
     """Валидирует безопасность кандидата-лекарства для пользователя."""
+    try:
+        request = MedicationSafetyRequest.model_validate(request)
+    except Exception as exc:
+        log.warning("medication_validate_request_parse_failed", error=str(exc), request_type=str(type(request)))
+        request = MedicationSafetyRequest()
+
     log.info(
         "medication_validate_called",
         user_id=request.userId,
@@ -110,69 +200,114 @@ async def validate_medication(
     )
 
     try:
-        checker = get_safety_checker()
         ctx = request.userContext
         candidate = request.candidateMedication
         med_name = candidate.customName or candidate.drugId or "unknown"
 
-        all_warnings: list[str] = []
-        all_blockers: list[str] = []
+        llm = get_llm_client()
+        log.info("llm_validation_called", user_id=ctx.userId, candidate=med_name)
 
-        # 1. Проверка аллергий
-        allergy_names = [a.allergen for a in ctx.allergies]
-        allergy_results = checker.check_allergies([med_name], allergy_names)
-        for w in allergy_results:
-            if w.severity == "high":
-                all_blockers.append(w.reason)
-            else:
-                all_warnings.append(w.reason)
+        drug_html = None
+        if candidate.drugId:
+            drug_info = await get_drug_by_id(str(candidate.drugId))
+            if drug_info:
+                drug_html = drug_info.get("html")
 
-        # 2. Проверка взаимодействий с текущими лекарствами
-        current_meds = [
-            Medication(
-                name=m.tradeName or m.internationalName or "",
-                dosage=f"{m.doseAmount} {m.doseUnit}" if m.doseAmount else "",
-                frequency=m.instructions or "",
+        system_prompt = (
+            "Ты — медицинский ассистент по безопасности лекарств. "
+            "На вход ты получаешь JSON с препаратом, его дозой, HTML-страницей из базы, "
+            "и профилем пользователя. Твоя задача — вернуть ТОЛЬКО корректный JSON без markdown и без пояснений вне JSON. "
+            "Формат ответа: {\"status\":\"ok|warning|danger\",\"warnings\":[...],\"blockers\":[...],\"metadata\":{...}}. "
+            "Если всё безопасно — status=ok, warnings=[], blockers=[]. "
+            "Если есть риск или противопоказание — status=warning или danger и добавь понятные причины. "
+            "Учитывай аллергию, дозу, хронические заболевания, взаимодействия и инструкции."
+        )
+
+        user_context_snip = {
+            "userId": ctx.userId,
+            "birthDate": getattr(ctx, "birthDate", None),
+            "heightCm": getattr(ctx, "heightCm", None),
+            "weightKg": getattr(ctx, "weightKg", None),
+            "bloodType": getattr(ctx, "bloodType", None),
+            "diagnoses": [
+                {"name": d.name, "diagnosedAt": getattr(d, "diagnosedAt", None)}
+                for d in ctx.diagnoses
+            ],
+            "allergies": [
+                {"allergen": a.allergen, "reaction": getattr(a, "reaction", None)}
+                for a in ctx.allergies
+            ],
+            "contextDegraded": getattr(ctx, "contextDegraded", False),
+            "contextWarnings": list(getattr(ctx, "contextWarnings", []) or []),
+            "activeMedications": [
+                {
+                    "tradeName": m.tradeName,
+                    "internationalName": m.internationalName,
+                    "doseAmount": m.doseAmount,
+                    "doseUnit": m.doseUnit,
+                    "instructions": m.instructions,
+                }
+                for m in ctx.activeMedications
+            ],
+        }
+
+        payload_for_llm = {
+            "candidate": {
+                "drugId": str(candidate.drugId) if candidate.drugId else None,
+                "customName": candidate.customName,
+                "doseAmount": candidate.doseAmount,
+                "doseUnit": candidate.doseUnit,
+                "instructions": candidate.instructions,
+                "startDate": candidate.startDate,
+                "endDate": candidate.endDate,
+            },
+            "userContext": user_context_snip,
+        }
+        if drug_html:
+            payload_for_llm["drugHtml"] = drug_html[:30000]
+
+        log.info(
+            "llm_validation_payload_ready",
+            user_id=ctx.userId,
+            candidate=med_name,
+            has_html=bool(drug_html),
+            payload_chars=len(json.dumps(payload_for_llm, ensure_ascii=False)),
+        )
+
+        llm_response = await llm.chat(
+            messages=[{"role": "user", "content": json.dumps(payload_for_llm, ensure_ascii=False)}],
+            system_prompt=system_prompt,
+            temperature=0.0,
+            max_tokens=1000,
+        )
+
+        try:
+            parsed = json.loads(llm_response)
+        except Exception as exc:
+            log.error("llm_validation_parse_failed", error=str(exc), raw=llm_response[:2000])
+            return MedicationSafetyResponse(
+                status="unavailable",
+                warnings=[],
+                blockers=[],
+                metadata={"error": "LLM returned invalid JSON", "raw": llm_response[:2000]},
             )
-            for m in ctx.activeMedications
-        ]
-        interaction_results = checker.check_drug_interactions([med_name], current_meds)
-        for w in interaction_results:
-            if w.severity == "high":
-                all_blockers.append(w.reason)
-            else:
-                all_warnings.append(w.reason)
 
-        # 3. Проверка хронических заболеваний
-        condition_names = [d.name.lower() for d in ctx.diagnoses]
-        condition_results = checker.check_chronic_conditions([med_name], condition_names)
-        for w in condition_results:
-            if w.severity == "high":
-                all_blockers.append(w.reason)
-            else:
-                all_warnings.append(w.reason)
+        status_value = str(parsed.get("status") or "unavailable").strip().lower()
+        warnings = parsed.get("warnings") or []
+        blockers = parsed.get("blockers") or []
+        metadata = parsed.get("metadata") or {}
 
-        # Определяем итоговый статус
-        if all_blockers:
-            result_status = "danger"
-        elif all_warnings:
-            result_status = "warning"
-        else:
-            result_status = "ok"
+        if status_value not in {"ok", "warning", "danger", "unavailable"}:
+            status_value = "unavailable"
 
         return MedicationSafetyResponse(
-            status=result_status,
-            warnings=all_warnings,
-            blockers=all_blockers,
-            metadata={
-                "checks_performed": [
-                    "allergy_check",
-                    "drug_interaction_check",
-                    "chronic_condition_check",
-                ],
-                "candidate_medication": med_name,
-            },
+            status=status_value,
+            warnings=warnings,
+            blockers=blockers,
+            metadata=metadata,
         )
+
+        
 
     except Exception as exc:
         log.error(

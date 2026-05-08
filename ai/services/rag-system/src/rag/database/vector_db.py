@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from typing import Any
+import math
 
 import structlog
 from qdrant_client import AsyncQdrantClient
@@ -66,6 +67,14 @@ class VectorStore:
         else:
             log.debug("qdrant_collection_exists", collection=collection)
 
+    async def delete_collection(self, collection: str) -> None:
+        """Удаляет коллекцию в Qdrant, если она существует."""
+        try:
+            await self._client.delete_collection(collection_name=collection)
+            log.info("qdrant_collection_deleted", collection=collection)
+        except Exception as exc:
+            log.debug("qdrant_collection_delete_skipped", collection=collection, error=str(exc))
+
     async def insert_vectors(
         self,
         collection: str,
@@ -114,12 +123,42 @@ class VectorStore:
         Returns:
             Список найденных чанков, отсортированных по убыванию релевантности.
         """
-        results = await self._client.search(
-            collection_name=collection,
-            query_vector=query_vector,
-            limit=top_k,
-            score_threshold=score_threshold,
-        )
+        try:
+            results = await self._client.search(
+                collection_name=collection,
+                query_vector=query_vector,
+                limit=top_k,
+                score_threshold=score_threshold,
+            )
+        except AttributeError:
+            # Compatibility path for qdrant-client versions where `search`
+            # is replaced by `query_points`.
+            try:
+                query_result = await self._client.query_points(
+                    collection_name=collection,
+                    query=query_vector,
+                    limit=top_k,
+                    score_threshold=score_threshold,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                results = getattr(query_result, "points", query_result)
+            except Exception as exc:
+                log.warning(
+                    "qdrant_dense_search_fallback",
+                    error=str(exc),
+                    collection=collection,
+                    reason="query_points_failed",
+                )
+                return await self._local_dense_search(collection, query_vector, top_k, score_threshold)
+        except Exception as exc:
+            log.warning(
+                "qdrant_dense_search_fallback",
+                error=str(exc),
+                collection=collection,
+                reason="search_failed",
+            )
+            return await self._local_dense_search(collection, query_vector, top_k, score_threshold)
 
         search_results = []
         for hit in results:
@@ -136,6 +175,80 @@ class VectorStore:
 
         log.info("search_complete", collection=collection, results=len(search_results))
         return search_results
+
+    async def _local_dense_search(
+        self,
+        collection: str,
+        query_vector: list[float],
+        top_k: int,
+        score_threshold: float,
+    ) -> list[SearchResult]:
+        """Fallback для старых Qdrant-серверов: считаем cosine similarity локально."""
+        points = await self.scroll_all(collection, limit=256)
+        query_norm = math.sqrt(sum(value * value for value in query_vector)) or 1.0
+
+        ranked: list[SearchResult] = []
+        for point in points:
+            vector = point.metadata.get("vector")
+            if not isinstance(vector, list) or not vector:
+                continue
+
+            dot = sum(a * b for a, b in zip(query_vector, vector))
+            vector_norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+            score = dot / (query_norm * vector_norm)
+            if score < score_threshold:
+                continue
+
+            ranked.append(
+                SearchResult(
+                    chunk_id=point.chunk_id,
+                    document_id=point.document_id,
+                    text=point.text,
+                    score=score,
+                    metadata=point.metadata,
+                )
+            )
+
+        ranked.sort(key=lambda item: item.score, reverse=True)
+        log.info("search_complete_local", collection=collection, results=len(ranked))
+        return ranked[:top_k]
+
+    async def scroll_all(self, collection: str, limit: int = 256) -> list[SearchResult]:
+        """Возвращает все записи коллекции с payload для построения sparse-индекса."""
+        results: list[SearchResult] = []
+        offset = None
+
+        while True:
+            points, offset = await self._client.scroll(
+                collection_name=collection,
+                limit=limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+
+            if not points:
+                break
+
+            for point in points:
+                payload = point.payload or {}
+                vector = getattr(point, "vector", None)
+                if isinstance(vector, dict):
+                    vector = next(iter(vector.values()), None)
+                results.append(
+                    SearchResult(
+                        chunk_id=str(point.id),
+                        document_id=payload.get("document_id", ""),
+                        text=payload.get("text", ""),
+                        score=0.0,
+                        metadata={**{k: v for k, v in payload.items() if k != "text"}, "vector": vector},
+                    )
+                )
+
+            if offset is None:
+                break
+
+        return results
 
 
 _vector_store: VectorStore | None = None
