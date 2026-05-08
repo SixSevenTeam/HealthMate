@@ -62,6 +62,26 @@ class LLMClient:
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
+        # 📊 ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ОТПРАВКИ В LLM
+        import os
+        if os.environ.get("DEBUG_LLM", "").lower() == "true":
+            log.info(
+                "llm_chat_request_full",
+                model=self._model,
+                num_messages=len(full_messages),
+                total_prompt_chars=sum(len(m.get("content", "")) for m in full_messages),
+            )
+            log.info("  System prompt:")
+            for line in system_prompt.split("\n")[:20]:
+                log.info(f"    {line}")
+            if len(system_prompt.split("\n")) > 20:
+                log.info(f"    ... ({len(system_prompt.split('/n')) - 20} more lines)")
+            
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")[:500]
+                log.info(f"  Message #{i+1} ({role}): {content}...")
+
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -76,6 +96,10 @@ class LLMClient:
                 input_msgs=len(messages),
                 output_len=len(content),
             )
+            
+            if os.environ.get("DEBUG_LLM", "").lower() == "true":
+                log.info(f"  LLM response: {content[:500]}...")
+            
             return content
         except Exception as e:
             log.error("llm_chat_failed", model=self._model, error=str(e))

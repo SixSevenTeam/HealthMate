@@ -1,0 +1,28 @@
+# FastAPI
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+
+# LLM (DeepSeek via OpenAI-compatible API)
+openai>=1.13.0
+
+# Vector DB & Search
+qdrant-client>=1.8.0
+rank-bm25>=0.2.2
+sentence-transformers>=2.5.0
+
+# HTML parsing for Vidal docs
+beautifulsoup4>=4.12.0
+html2text>=2020.1.16
+charset-normalizer>=3.3.0
+lxml>=5.0.0
+
+# Session & Caching
+redis>=5.0.0
+
+# Utils
+structlog>=24.0.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+tenacity>=8.2.0

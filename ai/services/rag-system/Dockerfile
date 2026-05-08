@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.11-slim-bookworm AS builder
 
 WORKDIR /app
@@ -8,8 +9,11 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+RUN --mount=type=cache,target=/root/.cache/pip pip install --upgrade pip && \
+    pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.5.1+cpu
+
+COPY src ./src/
+RUN --mount=type=cache,target=/root/.cache/pip pip install .
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
@@ -24,7 +28,6 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 COPY src ./src/
-COPY alembic ./alembic/
 
 RUN mkdir -p /tmp/jsn-rag
 
@@ -40,4 +43,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import httpx; r = httpx.get('http://localhost:8000/health'); assert r.status_code == 200" || exit 1
 
-CMD ["python", "-m", "main"]
+CMD ["uvicorn", "rag.app:app", "--host", "0.0.0.0", "--port", "8000"]

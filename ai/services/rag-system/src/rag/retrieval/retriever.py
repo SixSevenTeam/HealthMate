@@ -1,18 +1,19 @@
-"""Гибридный ретривер: плотный (dense) + разреженный (BM25) поиск.
+"""Ретривер с dense + sparse(BM25) поиском.
 
-Плотный поиск — косинусная близость векторов эмбеддингов в Qdrant.
-Разреженный поиск — BM25 по тексту чанков (rank-bm25).
-Результаты объединяются через Reciprocal Rank Fusion (RRF).
-
-Веса по умолчанию: 0.7 dense / 0.3 sparse (настраиваются через Settings).
+Dense-часть ищет в Qdrant, sparse-часть строится из сохранённых payload'ов
+с полем `sparse_text`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 from typing import Any
 
 import structlog
+from rank_bm25 import BM25Okapi
+
+from rag.retrieval.sparse import tokenize_for_sparse
 
 log = structlog.get_logger()
 
@@ -34,9 +35,8 @@ class HybridRetriever:
     Алгоритм:
     1. Генерируем эмбеддинг запроса.
     2. Dense-поиск: ищем top_k ближайших векторов в Qdrant.
-    3. Sparse-поиск: ищем top_k лучших совпадений по BM25.
-    4. Объединяем через RRF (Reciprocal Rank Fusion).
-    5. Возвращаем top_k объединённых результатов.
+    3. Sparse-поиск: строим BM25 из сохранённых payload'ов.
+    4. Объединяем результаты через weighted RRF.
     """
 
     def __init__(
@@ -51,7 +51,10 @@ class HybridRetriever:
         """
         self._dense_weight = dense_weight
         self._sparse_weight = sparse_weight
-        self._bm25_index = None  # TODO: инициализировать BM25Okapi при старте
+        self._bm25_index: BM25Okapi | None = None
+        self._bm25_docs: list[RetrievedChunk] = []
+        self._bm25_corpus: list[list[str]] = []
+        self._sparse_index_lock = asyncio.Lock()
 
     async def retrieve(
         self,
@@ -73,17 +76,38 @@ class HybridRetriever:
         query_vector = await embedding_service.embed_text(query)
 
         dense_results = await self._dense_search(query_vector, top_k)
+        if not dense_results:
+            log.info(
+                "dense_search_relaxed_fallback",
+                query_len=len(query),
+                top_k=top_k,
+                reason="no_results_with_threshold",
+            )
+            dense_results = await self._dense_search(query_vector, top_k, score_threshold=0.0)
 
-        # TODO: sparse_results = self._sparse_search(query, top_k)
-        # TODO: merged = self._merge_results(dense_results, sparse_results)
+        await self._ensure_sparse_index()
+        sparse_results = self._sparse_search(query, top_k)
+        merged = self._merge_results(dense_results, sparse_results)
 
-        log.info("retrieve_complete", query_len=len(query), results=len(dense_results))
-        return dense_results[:top_k]
+        returned = min(len(merged), top_k)
+        log.info(
+            "retrieve_complete",
+            query_len=len(query),
+            top_k=top_k,
+            dense_count=len(dense_results),
+            sparse_count=len(sparse_results),
+            merged_count=len(merged),
+            returned_count=returned,
+            dense_weight=self._dense_weight,
+            sparse_weight=self._sparse_weight,
+        )
+        return merged[:top_k]
 
     async def _dense_search(
         self,
         query_vector: list[float],
         top_k: int,
+        score_threshold: float | None = None,
     ) -> list[RetrievedChunk]:
         """Поиск по косинусной близости векторов в Qdrant.
 
@@ -99,8 +123,30 @@ class HybridRetriever:
             collection=settings.qdrant_collection_name,
             query_vector=query_vector,
             top_k=top_k,
-            score_threshold=settings.retrieval_similarity_threshold,
+            score_threshold=score_threshold if score_threshold is not None else settings.retrieval_similarity_threshold,
         )
+
+        log.info(
+            "dense_search_result",
+            collection=settings.qdrant_collection_name,
+            returned=len(results),
+            top_k=top_k,
+            score_threshold=score_threshold if score_threshold is not None else settings.retrieval_similarity_threshold,
+        )
+        
+        # 📊 ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ РЕЗУЛЬТАТОВ ПОИСКА
+        import os
+        if os.environ.get("DEBUG_RETRIEVAL", "").lower() == "true":
+            for i, r in enumerate(results, 1):
+                log.info(
+                    f"  ├─ Dense result #{i}",
+                    score=r.score,
+                    document_id=r.document_id,
+                    chunk_id=r.chunk_id,
+                    drug_id=r.metadata.get("drug_id"),
+                )
+                log.info(f"    Text: {r.text[:400]}...")
+                log.info(f"    Metadata: {r.metadata}")
 
         return [
             RetrievedChunk(
@@ -124,8 +170,34 @@ class HybridRetriever:
             query: Текстовый запрос.
             top_k: Количество результатов.
         """
-        # TODO: BM25Okapi(corpus).get_top_n(tokenize(query), corpus, n=top_k)
-        pass
+        if self._bm25_index is None or not self._bm25_docs:
+            return []
+
+        query_tokens = tokenize_for_sparse(query)
+        scores = self._bm25_index.get_scores(query_tokens)
+
+        ranked_indexes = sorted(
+            range(len(scores)),
+            key=lambda index: scores[index],
+            reverse=True,
+        )[:top_k]
+
+        results: list[RetrievedChunk] = []
+        for index in ranked_indexes:
+            if scores[index] <= 0:
+                continue
+            doc = self._bm25_docs[index]
+            results.append(
+                RetrievedChunk(
+                    chunk_id=doc.chunk_id,
+                    document_id=doc.document_id,
+                    text=doc.text,
+                    score=float(scores[index]),
+                    metadata=doc.metadata,
+                )
+            )
+
+        return results
 
     def _merge_results(
         self,
@@ -141,8 +213,58 @@ class HybridRetriever:
             dense: Результаты плотного поиска.
             sparse: Результаты BM25-поиска.
         """
-        # TODO: реализовать RRF с весами self._dense_weight и self._sparse_weight
-        pass
+        if not sparse:
+            return dense
+
+        k = 60.0
+        merged: dict[str, RetrievedChunk] = {}
+        scores: dict[str, float] = {}
+
+        def add_ranked(results: list[RetrievedChunk], weight: float) -> None:
+            for rank, chunk in enumerate(results, start=1):
+                chunk_key = chunk.chunk_id
+                if chunk_key not in merged:
+                    merged[chunk_key] = chunk
+                    scores[chunk_key] = 0.0
+                scores[chunk_key] += weight / (k + rank)
+
+        add_ranked(dense, self._dense_weight)
+        add_ranked(sparse, self._sparse_weight)
+
+        ranked = sorted(merged.values(), key=lambda chunk: scores[chunk.chunk_id], reverse=True)
+        for chunk in ranked:
+            chunk.score = scores[chunk.chunk_id]
+        return ranked
+
+    async def _ensure_sparse_index(self) -> None:
+        """Ленивая загрузка BM25-индекса из сохранённых Qdrant payload'ов."""
+        if self._bm25_index is not None:
+            return
+
+        async with self._sparse_index_lock:
+            if self._bm25_index is not None:
+                return
+
+            from rag.core.config import settings
+            from rag.database.vector_db import get_vector_store
+
+            vector_store = await get_vector_store()
+            documents = await vector_store.scroll_all(collection=settings.qdrant_collection_name)
+
+            self._bm25_docs = []
+            self._bm25_corpus = []
+
+            for document in documents:
+                sparse_text = document.metadata.get("sparse_text") or document.text
+                tokens = tokenize_for_sparse(str(sparse_text))
+                if not tokens:
+                    continue
+
+                self._bm25_docs.append(document)
+                self._bm25_corpus.append(tokens)
+
+            self._bm25_index = BM25Okapi(self._bm25_corpus) if self._bm25_corpus else None
+            log.info("sparse_index_loaded", documents=len(self._bm25_docs), corpus=len(self._bm25_corpus))
 
 
 _retriever: HybridRetriever | None = None
