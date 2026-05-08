@@ -1,6 +1,6 @@
 import { httpRequest } from "@/shared/api/httpClient";
 
-export function getDashboardSummary(from, to) {
+export function getDashboardSummary(from, to, scope = "active") {
   const params = new URLSearchParams();
 
   if (from) {
@@ -9,6 +9,10 @@ export function getDashboardSummary(from, to) {
 
   if (to) {
     params.set("to", to);
+  }
+
+  if (scope) {
+    params.set("scope", scope);
   }
 
   const query = params.toString();

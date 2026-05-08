@@ -44,7 +44,7 @@ public class DashboardService {
         this.drugRepository = drugRepository;
     }
 
-    public DashboardSummaryResponse getSummary(UUID userId, LocalDate from, LocalDate to) {
+    public DashboardSummaryResponse getSummary(UUID userId, LocalDate from, LocalDate to, String scope) {
         if (from == null || to == null) {
             throw new IllegalArgumentException("Both 'from' and 'to' are required");
         }
@@ -52,18 +52,24 @@ public class DashboardService {
             throw new IllegalArgumentException("'to' date must be greater than or equal to 'from' date");
         }
 
+        String normalizedScope = normalizeScope(scope);
+
         ZoneId zone = ZoneId.systemDefault();
         Instant fromInstant = from.atStartOfDay(zone).toInstant();
         Instant toInstant = to.atStartOfDay(zone).plusDays(1).toInstant();
         Instant now = Instant.now();
 
-        List<UserMedication> userMedications = userMedicationRepository.findByUserId(userId, Pageable.unpaged()).getContent();
+        List<UserMedication> allUserMedications = userMedicationRepository.findByUserId(userId, Pageable.unpaged()).getContent();
+        List<UserMedication> userMedications = allUserMedications.stream()
+            .filter(medication -> matchesScope(medication, normalizedScope))
+            .toList();
+
         if (userMedications.isEmpty()) {
             return DashboardSummaryResponse.builder()
                 .period(new DashboardSummaryResponse.PeriodDTO(from, to))
                 .adherence(List.of())
                 .dailySeries(buildEmptyDailySeries(from, to))
-                .insights(List.of("No medications for selected period."))
+                .insights(List.of("No medications for selected filter."))
                 .build();
         }
 
@@ -123,6 +129,14 @@ public class DashboardService {
 
                     Instant scheduledAt = day.atTime(schedule.getTimeOfDay()).atZone(zone).toInstant();
                     if (scheduledAt.isBefore(fromInstant) || !scheduledAt.isBefore(toInstant)) {
+                        continue;
+                    }
+
+                    // Respect medication start/end dates: do not count schedules outside the active range
+                    if (medication.getStartDate() != null && day.isBefore(medication.getStartDate())) {
+                        continue;
+                    }
+                    if (medication.getEndDate() != null && day.isAfter(medication.getEndDate())) {
                         continue;
                     }
 
@@ -198,6 +212,29 @@ public class DashboardService {
             .dailySeries(dailySeries)
             .insights(insights)
             .build();
+    }
+
+    private String normalizeScope(String scope) {
+        if (scope == null || scope.isBlank()) {
+            return "active";
+        }
+
+        String normalized = scope.trim().toLowerCase();
+        if ("inactive".equals(normalized) || "all".equals(normalized) || "active".equals(normalized)) {
+            return normalized;
+        }
+
+        return "active";
+    }
+
+    private boolean matchesScope(UserMedication medication, String scope) {
+        boolean isActive = Boolean.TRUE.equals(medication.getIsActive());
+        return switch (scope) {
+            case "inactive" -> !isActive;
+            case "all" -> true;
+            case "active" -> isActive;
+            default -> isActive;
+        };
     }
 
     private boolean isScheduledDay(LocalDate date, Integer[] daysOfWeek) {
