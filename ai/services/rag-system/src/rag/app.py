@@ -18,6 +18,7 @@ from rag.api.router import api_router, chat_router
 from rag.core.config import settings
 from rag.core.embeddings import get_embedding_service
 from rag.core.logger import setup_logging
+from rag.retrieval.retriever import get_retriever
 
 setup_logging()
 log = structlog.get_logger()
@@ -75,7 +76,7 @@ app.include_router(chat_router)
 
 @app.on_event("startup")
 async def warmup_embeddings() -> None:
-    """Preload embedding model at startup to avoid first-request stall."""
+    """Preload embedding model and BM25 index at startup to avoid first-request stall."""
     started = time.monotonic()
     try:
         embedding_service = get_embedding_service()
@@ -84,3 +85,11 @@ async def warmup_embeddings() -> None:
         log.info("embedding_warmup_complete", elapsed_ms=elapsed_ms)
     except Exception as exc:
         log.warning("embedding_warmup_failed", error=str(exc))
+
+    try:
+        retriever = get_retriever()
+        await retriever._ensure_sparse_index()
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        log.info("bm25_warmup_complete", elapsed_ms=elapsed_ms)
+    except Exception as exc:
+        log.warning("bm25_warmup_failed", error=str(exc))

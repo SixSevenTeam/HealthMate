@@ -213,7 +213,12 @@ class VectorStore:
         log.info("search_complete_local", collection=collection, results=len(ranked))
         return ranked[:top_k]
 
-    async def scroll_all(self, collection: str, limit: int = 256) -> list[SearchResult]:
+    async def scroll_all(
+        self,
+        collection: str,
+        limit: int = 256,
+        with_vectors: bool = True,
+    ) -> list[SearchResult]:
         """Возвращает все записи коллекции с payload для построения sparse-индекса."""
         results: list[SearchResult] = []
         offset = None
@@ -224,7 +229,7 @@ class VectorStore:
                 limit=limit,
                 offset=offset,
                 with_payload=True,
-                with_vectors=True,
+                with_vectors=with_vectors,
             )
 
             if not points:

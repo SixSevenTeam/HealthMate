@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com")
-    llm_model: str = Field(default="deepseek-v4-flash")
+    llm_model: str = Field(default="deepseek-chat")
     llm_temperature: float = Field(default=0.7)
     llm_max_tokens: int = Field(default=4000)
 

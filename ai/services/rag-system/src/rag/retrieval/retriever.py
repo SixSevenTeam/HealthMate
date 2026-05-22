@@ -249,7 +249,10 @@ class HybridRetriever:
             from rag.database.vector_db import get_vector_store
 
             vector_store = await get_vector_store()
-            documents = await vector_store.scroll_all(collection=settings.qdrant_collection_name)
+            documents = await vector_store.scroll_all(
+                collection=settings.qdrant_collection_name,
+                with_vectors=False,
+            )
 
             self._bm25_docs = []
             self._bm25_corpus = []

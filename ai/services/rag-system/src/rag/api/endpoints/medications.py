@@ -23,7 +23,6 @@ log = structlog.get_logger()
 router = APIRouter()
 
 
-# ── Модели запроса (контракт Васе) ──────────────────────────────────────────
 
 class MedValidationDiagnosis(BaseModel):
     name: str

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"d:\\\\Project\\\\Vladimir\\\\Java\\\\HealthMate\\\\ai\" -Recurse -Directory)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Project\\\\Vladimir\\\\Java\\\\HealthMate\\\\ai\\\\services\\\\\" -Directory | Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Project\\\\Vladimir\\\\Java\\\\HealthMate\" -Recurse -Filter \"docker-compose.yml\" -ErrorAction SilentlyContinue)"
+    ]
+  }
+}

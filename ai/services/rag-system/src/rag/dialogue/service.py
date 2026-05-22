@@ -166,6 +166,17 @@ class DialogueService:
             )
         except Exception as exc:
             log.error("anamnesis_llm_generation_failed", error=str(exc), session_id=session.session_id)
+            if session.questions_asked >= settings.max_clarifying_questions - 1 and session.collected_symptoms:
+                log.warning(
+                    "anamnesis_fallback_to_synthesis",
+                    reason=str(exc),
+                    symptoms_count=len(session.collected_symptoms),
+                    questions_asked=session.questions_asked,
+                    session_id=session.session_id,
+                )
+                session.stage = ConsultationStage.SYNTHESIS
+                await self._sessions.update(session)
+                return await self._synthesize_context(request, session)
             raise RuntimeError(f"Failed to generate anamnesis question via LLM: {exc}") from exc
 
         guided_question = format_question_for_response(guided_question_model)

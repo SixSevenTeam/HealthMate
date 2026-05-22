@@ -43,15 +43,15 @@ def build_anamnesis_system_prompt() -> str:
 - Не ставь диагноз и не назначай препараты.
 - Вопрос должен учитывать уже собранные ответы, профиль пользователя, аллергии, диагнозы и текущие лекарства.
 - Не повторяй уже заданные вопросы.
-- Пиши только на русском языке.
+- Пиши только на русском языке, включая поля value в answer_options.
 - Отвечай строго JSON-объектом без markdown, без поясняющего текста и без тройных кавычек.
 
 Формат JSON:
 {
-  "question_id": "short_identifier",
+  "question_id": "краткий_идентификатор",
   "question": "текст вопроса",
   "answer_options": [
-    {"label": "вариант", "value": "значение"}
+    {"label": "вариант для отображения", "value": "краткое значение на русском"}
   ],
   "allow_free_text": true,
   "rationale": "кратко, почему этот вопрос важен"
@@ -93,6 +93,8 @@ def build_anamnesis_messages(
 
 def parse_guided_question(raw_text: str) -> GuidedAnamnesisQuestion:
     raw_text = raw_text.strip()
+    if not raw_text:
+        raise ValueError("LLM returned empty response — check model name and API key")
     if raw_text.startswith("```"):
         raw_text = raw_text.strip("`\n ")
         if raw_text.lower().startswith("json"):

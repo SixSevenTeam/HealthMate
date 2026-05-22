@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
+import openai
 import structlog
 from openai import AsyncOpenAI
 
@@ -62,7 +63,6 @@ class LLMClient:
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
-        # 📊 ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ОТПРАВКИ В LLM
         import os
         if os.environ.get("DEBUG_LLM", "").lower() == "true":
             log.info(
@@ -83,26 +83,57 @@ class LLMClient:
                 log.info(f"  Message #{i+1} ({role}): {content}...")
 
         try:
-            response = await self._client.chat.completions.create(
+            chunks: list[str] = []
+            stream = await self._client.chat.completions.create(
                 model=self._model,
                 messages=full_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                stream=True,
             )
-            content = response.choices[0].message.content or ""
+            reasoning_chunks: list[str] = []
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    chunks.append(delta.content)
+                else:
+                    extra = getattr(delta, "model_extra", None) or {}
+                    rc = extra.get("reasoning_content") or ""
+                    if rc:
+                        reasoning_chunks.append(rc)
+
+            content = "".join(chunks) or "".join(reasoning_chunks)
             log.info(
                 "llm_chat_complete",
                 model=self._model,
                 input_msgs=len(messages),
                 output_len=len(content),
             )
-            
+
             if os.environ.get("DEBUG_LLM", "").lower() == "true":
                 log.info(f"  LLM response: {content[:500]}...")
-            
+
+            if not content.strip():
+                raise RuntimeError(f"LLM returned empty content after full stream (model={self._model})")
+
             return content
+        except RuntimeError:
+            raise
+        except openai.RateLimitError as e:
+            log.warning("llm_rate_limited", model=self._model, error=str(e))
+            raise RuntimeError(f"LLM rate limited: {e}") from e
+        except openai.APITimeoutError as e:
+            log.error("llm_timeout", model=self._model, error=str(e))
+            raise RuntimeError(f"LLM timeout: {e}") from e
+        except openai.AuthenticationError as e:
+            log.error("llm_auth_failed", model=self._model, base_url=self._base_url, hint="check DEEPSEEK_API_KEY")
+            raise RuntimeError(f"LLM auth error: {e}") from e
+        except openai.BadRequestError as e:
+            prompt_chars = sum(len(m.get("content", "")) for m in full_messages)
+            log.error("llm_bad_request", model=self._model, prompt_chars=prompt_chars, error=str(e))
+            raise RuntimeError(f"LLM bad request: {e}") from e
         except Exception as e:
-            log.error("llm_chat_failed", model=self._model, error=str(e))
+            log.error("llm_unexpected_error", model=self._model, error_type=type(e).__name__, error=str(e))
             raise RuntimeError(f"LLM API error: {e}") from e
 
     async def chat_stream(
