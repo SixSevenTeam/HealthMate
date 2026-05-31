@@ -1,0 +1,74 @@
+# Environment variables
+**/.env
+**/.env.*
+!**/.env.example
+services/docs
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.so
+
+# Virtual environments
+**/venv/
+**/.venv/
+**/env/
+**/ENV/
+
+# IDE
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+**/.DS_Store
+
+# Build artifacts
+**/build/
+**/dist/
+**/*.egg-info/
+**/.eggs/
+
+# Database
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# Logs
+**/*.log
+**/logs/
+
+# Docker
+**/.dockerignore
+
+# Coverage
+**/.coverage
+**/htmlcov/
+**/coverage.xml
+
+# Jupyter
+**/.ipynb_checkpoints/
+**/*.ipynb
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Temporary files
+**/tmp/
+**/temp/
+**/*.tmp
+**/*.bak
+**/*.swp
+
+# MinIO/S3 local storage
+**/minio-data/
+
+# Alembic
+**/alembic/versions/*.pyc
+
+# Internal working notes
+**/docs/internal/

@@ -1,0 +1,94 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: healthmate-backend
+    env_file:
+      - ./.env
+    environment:
+      PYTHON_SERVICE_URL: http://rag-system:8000
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./dataset:/app/dataset:ro
+    depends_on:
+      - postgres
+      - rag-system
+    networks:
+      - healthmate-network
+
+  rag-system:
+    build:
+      context: ./ai/services/rag-system
+    container_name: healthmate-rag
+    env_file:
+      - ./.env
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8080
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      DATASET_ROOT: /app/dataset/vidal_2018-2023/data/docs
+      API_PORT: 8000
+      API_RELOAD: "false"
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEBUG_LLM: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - qdrant
+      - redis
+    volumes:
+      - ./dataset:/app/dataset:ro
+    networks:
+      - healthmate-network
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: healthmate-postgres
+    env_file:
+      - ./.env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - healthmate-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-healthmate_user} -d ${POSTGRES_DB:-HealthMate_DB}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: healthmate-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - healthmate-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: healthmate-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - healthmate-network
+
+volumes:
+  postgres_data:
+  qdrant_storage:
+
+networks:
+  healthmate-network:
+    driver: bridge

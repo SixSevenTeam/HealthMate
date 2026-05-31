@@ -1,0 +1,110 @@
+version: "3.9"
+
+services:
+  # ── RAG System ─────────────────────────────────────────────────────────────
+  rag-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-system
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_HOST: postgres
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - rag-net
+
+  # ── Document Parser ────────────────────────────────────────────────────────
+  document-parser:
+    build:
+      context: ../document-parser
+      dockerfile: Dockerfile
+    container_name: document-parser
+    restart: unless-stopped
+    env_file:
+      - ../document-parser/.env
+    networks:
+      - rag-net
+
+  # ── Qdrant (vector DB) ────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # HTTP / REST
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - rag-net
+
+  # ── Redis (sessions / cache) ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+    networks:
+      - rag-net
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: rag_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d rag_db"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    networks:
+      - rag-net
+
+volumes:
+  qdrant-data:
+  redis-data:
+  postgres-data:
+
+networks:
+  rag-net:
+    driver: bridge
