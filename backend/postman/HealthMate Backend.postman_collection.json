@@ -1,0 +1,977 @@
+{
+	"info": {
+		"_postman_id": "015704a1-8301-4d72-8550-e83971f22a0e",
+		"name": "HealthMate Backend",
+		"description": "Полная коллекция. Запускать сверху вниз — каждый запрос сохраняет ID для следующего.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+		"_exporter_id": "49328027",
+		"_collection_link": "https://vgnapuga-1840571.postman.co/workspace/Nikita's-Workspace~9ba72be0-8288-4d10-84bc-7927148971d8/collection/49328027-015704a1-8301-4d72-8550-e83971f22a0e?action=share&source=collection_link&creator=49328027"
+	},
+	"item": [
+		{
+			"name": "1. Health Check",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Service UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/health"
+			},
+			"response": []
+		},
+		{
+			"name": "2. Register",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 201 or 409', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));",
+							"if (pm.response.code === 201) {",
+							"    pm.test('Has id', () => pm.expect(pm.response.json().id).to.be.a('string'));",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"Тест\",\n  \"lastName\": \"Пользователь\",\n  \"birthDate\": \"1980-05-15\",\n  \"heightCm\": 175,\n  \"weightKg\": 78.5,\n  \"bloodType\": \"A+\",\n  \"diagnoses\": [{\"name\": \"Гипертония\", \"diagnosedAt\": \"2020-01\"}],\n  \"allergies\": [{\"allergen\": \"Пенициллин\", \"reaction\": \"Крапивница\"}]\n}"
+				},
+				"url": "{{baseUrl}}/api/auth/register"
+			},
+			"response": []
+		},
+		{
+			"name": "3. Login",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Cookie jwt set', () => pm.expect(pm.cookies.has('jwt')).to.be.true);"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+				},
+				"url": "{{baseUrl}}/api/auth/login"
+			},
+			"response": []
+		},
+		{
+			"name": "4. Get Current User",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Email matches', () => pm.expect(pm.response.json().email).to.eql(pm.environment.get('email')));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/auth/me"
+			},
+			"response": []
+		},
+		{
+			"name": "5. Login Wrong Password (негатив)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 401', () => pm.response.to.have.status(401));",
+							"pm.test('INVALID_CREDENTIALS', () => pm.expect(pm.response.json().error).to.eql('INVALID_CREDENTIALS'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"wrongpassword\"\n}"
+				},
+				"url": "{{baseUrl}}/api/auth/login"
+			},
+			"response": []
+		},
+		{
+			"name": "6. Login Again (после негатива)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+				},
+				"url": "{{baseUrl}}/api/auth/login"
+			},
+			"response": []
+		},
+		{
+			"name": "7. Get Profile",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/profile"
+			},
+			"response": []
+		},
+		{
+			"name": "8. Update Profile",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Has updatedAt', () => pm.expect(pm.response.json().updatedAt).to.be.a('string'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"heightCm\": 178,\n  \"weightKg\": 76.5,\n  \"bloodType\": \"B+\",\n  \"diagnoses\": [\n    {\"name\": \"Гипертония\", \"diagnosedAt\": \"2020-01\"},\n    {\"name\": \"Диабет 2 типа\", \"diagnosedAt\": \"2019-06\"}\n  ],\n  \"allergies\": [\n    {\"allergen\": \"Пенициллин\", \"reaction\": \"Крапивница\"},\n    {\"allergen\": \"Аспирин\", \"reaction\": \"Отёк Квинке\"}\n  ]\n}"
+				},
+				"url": "{{baseUrl}}/api/profile"
+			},
+			"response": []
+		},
+		{
+			"name": "9. Get Profile — проверить обновление",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('BloodType B+', () => pm.expect(pm.response.json().bloodType).to.eql('B+'));",
+							"pm.test('2 diagnoses', () => pm.expect(pm.response.json().diagnoses).to.have.lengthOf(2));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/profile"
+			},
+			"response": []
+		},
+		{
+			"name": "10. Search Drugs",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Has results', () => pm.expect(pm.response.json().results).to.be.an('array'));",
+							"var body = pm.response.json();",
+							"if (body.results && body.results.length > 0) {",
+							"    pm.environment.set('drugId', body.results[0].id);",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/drugs/search?q=ибупрофен",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"drugs",
+						"search"
+					],
+					"query": [
+						{
+							"key": "q",
+							"value": "ибупрофен"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "11. Validate Medication Safety",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200 or 503', () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));",
+							"if (pm.response.code === 200) {",
+							"    pm.test('Has status/warnings/blockers', () => {",
+							"        var b = pm.response.json();",
+							"        pm.expect(b).to.have.property('status');",
+							"        pm.expect(b).to.have.property('warnings');",
+							"        pm.expect(b).to.have.property('blockers');",
+							"    });",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"customName\": \"Ибупрофен\",\n  \"doseAmount\": 400,\n  \"doseUnit\": \"мг\",\n  \"instructions\": \"после еды\",\n  \"startDate\": \"2026-04-14\"\n}"
+				},
+				"url": "{{baseUrl}}/api/medications/validate"
+			},
+			"response": []
+		},
+		{
+			"name": "12. Create Medication",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 201', () => pm.response.to.have.status(201));",
+							"var body = pm.response.json();",
+							"pm.test('Has id and 2 schedules', () => {",
+							"    pm.expect(body.id).to.be.a('string');",
+							"    pm.expect(body.schedules).to.have.lengthOf(2);",
+							"});",
+							"pm.environment.set('medicationId', body.id);",
+							"console.log('medicationId:', body.id);"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"customName\": \"Ибупрофен\",\n  \"doseAmount\": 400,\n  \"doseUnit\": \"мг\",\n  \"instructions\": \"принимать после еды\",\n  \"startDate\": \"2026-01-01\",\n  \"endDate\": \"2026-12-31\",\n  \"schedules\": [\n    { \"timeOfDay\": \"08:00\", \"daysOfWeek\": [1,2,3,4,5,6,7] },\n    { \"timeOfDay\": \"20:00\", \"daysOfWeek\": [1,2,3,4,5,6,7] }\n  ]\n}"
+				},
+				"url": "{{baseUrl}}/api/medications"
+			},
+			"response": []
+		},
+		{
+			"name": "13. List Medications",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Has active/inactive', () => {",
+							"    var b = pm.response.json();",
+							"    pm.expect(b.active).to.be.an('array');",
+							"    pm.expect(b.inactive).to.be.an('array');",
+							"});"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/medications?page=0&size=20",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"medications"
+					],
+					"query": [
+						{
+							"key": "page",
+							"value": "0"
+						},
+						{
+							"key": "size",
+							"value": "20"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "14. Get Schedules",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"var body = pm.response.json();",
+							"if (body && body.length > 0) {",
+							"    pm.environment.set('scheduleId', body[0].id);",
+							"    console.log('scheduleId:', body[0].id);",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/medications/{{medicationId}}/schedules"
+			},
+			"response": []
+		},
+		{
+			"name": "15. Add Schedule",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 201', () => pm.response.to.have.status(201));",
+							"pm.test('Has id', () => pm.expect(pm.response.json().id).to.be.a('string'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"timeOfDay\": \"14:00\",\n  \"daysOfWeek\": [1, 3, 5]\n}"
+				},
+				"url": "{{baseUrl}}/api/medications/{{medicationId}}/schedules"
+			},
+			"response": []
+		},
+		{
+			"name": "16. Get Intake Logs",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Has logs array', () => pm.expect(pm.response.json().logs).to.be.an('array'));",
+							"var body = pm.response.json();",
+							"if (body.logs && body.logs.length > 0) {",
+							"    pm.environment.set('intakeLogId', body.logs[0].id);",
+							"    console.log('intakeLogId:', body.logs[0].id);",
+							"} else {",
+							"    console.warn('No intake logs found — следующие тесты могут упасть');",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/medications/{{medicationId}}/intake-logs?from=2026-01-01&to=2026-12-31",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"medications",
+						"{{medicationId}}",
+						"intake-logs"
+					],
+					"query": [
+						{
+							"key": "from",
+							"value": "2026-01-01"
+						},
+						{
+							"key": "to",
+							"value": "2026-12-31"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "17. Mark as Taken",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Status taken', () => pm.expect(pm.response.json().status).to.eql('taken'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": "{{baseUrl}}/api/medications/intake-logs/{{intakeLogId}}/take"
+			},
+			"response": []
+		},
+		{
+			"name": "18. Set Status — missed",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Status missed', () => pm.expect(pm.response.json().status).to.eql('missed'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \"status\": \"missed\" }"
+				},
+				"url": "{{baseUrl}}/api/medications/intake-logs/{{intakeLogId}}/status"
+			},
+			"response": []
+		},
+		{
+			"name": "19. Set Status — invalid (негатив)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 400', () => pm.response.to.have.status(400));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \"status\": \"INVALID\" }"
+				},
+				"url": "{{baseUrl}}/api/medications/intake-logs/{{intakeLogId}}/status"
+			},
+			"response": []
+		},
+		{
+			"name": "20. Delete Schedule",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Status 200 or 409', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": "{{baseUrl}}/api/medications/schedules/{{scheduleId}}"
+			},
+			"response": []
+		},
+		{
+			"name": "21. Deactivate Medication",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('isActive false', () => pm.expect(pm.response.json().isActive).to.be.false);"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \"isActive\": false }"
+				},
+				"url": "{{baseUrl}}/api/medications/{{medicationId}}/active"
+			},
+			"response": []
+		},
+		{
+			"name": "22. Reactivate Medication",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test('Status 200 or 409', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \"isActive\": true }"
+				},
+				"url": "{{baseUrl}}/api/medications/{{medicationId}}/active"
+			},
+			"response": []
+		},
+		{
+			"name": "23. Delete Medication (soft)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('isActive false', () => pm.expect(pm.response.json().isActive).to.be.false);"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": "{{baseUrl}}/api/medications/{{medicationId}}"
+			},
+			"response": []
+		},
+		{
+			"name": "24. Create Conversation",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 201', () => pm.response.to.have.status(201));",
+							"var body = pm.response.json();",
+							"pm.environment.set('conversationId', body.id);",
+							"console.log('conversationId:', body.id);"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \"title\": \"Тестовый диалог\" }"
+				},
+				"url": "{{baseUrl}}/api/conversations"
+			},
+			"response": []
+		},
+		{
+			"name": "25. List Conversations",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/conversations?page=0&size=20",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"conversations"
+					],
+					"query": [
+						{
+							"key": "page",
+							"value": "0"
+						},
+						{
+							"key": "size",
+							"value": "20"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "26. Send Message (AI)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200 or 503', () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));",
+							"if (pm.response.code === 200) {",
+							"    pm.test('Has userMessage', () => pm.expect(pm.response.json().userMessage).to.be.an('object'));",
+							"}"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{ \"content\": \"У меня болит горло и температура 37.8\" }"
+				},
+				"url": "{{baseUrl}}/api/conversations/{{conversationId}}/messages"
+			},
+			"response": []
+		},
+		{
+			"name": "27. Get Messages",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/conversations/{{conversationId}}/messages"
+			},
+			"response": []
+		},
+		{
+			"name": "28. Delete Conversation",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Deleted', () => pm.expect(pm.response.json().message).to.eql('Conversation deleted'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": "{{baseUrl}}/api/conversations/{{conversationId}}"
+			},
+			"response": []
+		},
+		{
+			"name": "29. Dashboard Summary",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));",
+							"pm.test('Has period/adherence/dailySeries/insights', () => {",
+							"    var b = pm.response.json();",
+							"    pm.expect(b).to.have.property('period');",
+							"    pm.expect(b).to.have.property('adherence');",
+							"    pm.expect(b).to.have.property('dailySeries');",
+							"    pm.expect(b).to.have.property('insights');",
+							"});"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/dashboard/summary?from=2026-01-01&to=2026-12-31&scope=active",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"dashboard",
+						"summary"
+					],
+					"query": [
+						{
+							"key": "from",
+							"value": "2026-01-01"
+						},
+						{
+							"key": "to",
+							"value": "2026-12-31"
+						},
+						{
+							"key": "scope",
+							"value": "active"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "30. Logout",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 200', () => pm.response.to.have.status(200));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": "{{baseUrl}}/api/auth/logout"
+			},
+			"response": []
+		},
+		{
+			"name": "31. GET /me после logout (негатив)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 401', () => pm.response.to.have.status(401));",
+							"pm.test('UNAUTHORIZED', () => pm.expect(pm.response.json().error).to.eql('UNAUTHORIZED'));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseUrl}}/api/auth/me"
+			},
+			"response": []
+		},
+		{
+			"name": "32. GET /medications после logout (негатив)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							"pm.test('Status 401', () => pm.response.to.have.status(401));"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/api/medications?page=0&size=20",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"api",
+						"medications"
+					],
+					"query": [
+						{
+							"key": "page",
+							"value": "0"
+						},
+						{
+							"key": "size",
+							"value": "20"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

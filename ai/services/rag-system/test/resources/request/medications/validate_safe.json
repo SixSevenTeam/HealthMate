@@ -1,0 +1,14 @@
+{
+  "userId": "user-test-1",
+  "userContext": {
+    "userId": "user-test-1",
+    "diagnoses": [],
+    "allergies": [],
+    "activeMedications": []
+  },
+  "candidateMedication": {
+    "customName": "paracetamol",
+    "doseAmount": 500,
+    "doseUnit": "mg"
+  }
+}

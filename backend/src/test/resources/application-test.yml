@@ -1,0 +1,35 @@
+jpa:
+  hibernate:
+    ddl-auto: none
+
+  show-sql: flase
+
+config:
+  import: ""
+
+jwt:
+  secret: test_jwt_secret_key_min_32_chars_long
+  expiration-ms: 3600000
+  cookie-name: jwt
+
+aes:
+  secret-key: test_jwt_secret_key_32_chars_lng
+
+python:
+  service-url: http://localhost:9999
+  internal-api-key: test-interanl-key
+  request-timeout-ms: 1000
+  retry-count: 1
+  retry-delay: 100
+
+auth:
+  cookie-secure: false
+  cookie-same-site: Strict
+
+healthmate:
+  dataset-root: /tmp/test-dataset
+
+logging:
+  level:
+    root: WARN
+    com.healthmate: WARN

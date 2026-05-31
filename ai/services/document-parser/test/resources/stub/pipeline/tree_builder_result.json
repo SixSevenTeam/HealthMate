@@ -1,0 +1,13 @@
+{
+  "type": "root",
+  "heading": {"depth": 0, "title": "Document Root", "page_starts_at": 1},
+  "content": "",
+  "children": [
+    {
+      "type": "section",
+      "heading": {"depth": 1, "title": "Парацетамол", "page_starts_at": 1},
+      "content": "Обезболивающее средство.",
+      "children": []
+    }
+  ]
+}

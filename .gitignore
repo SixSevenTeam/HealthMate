@@ -4,6 +4,7 @@
 *.ipr
 *.iws
 .vscode/
+dataset/backup.snapshot
 
 # OS
 .DS_Store
@@ -18,6 +19,8 @@ Thumbs.db
 *.jar
 *.war
 *.ear
+/2_task
+/2_task.zip
 
 # Python
 __pycache__/
@@ -52,3 +55,34 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+# Database dumps and init scripts
+*.dump
+healthmate_local.dump
+*.sql
+!*.sql  # если хотите всё равно игнорировать все .sql файлы
+initdata.sql
+tmp_seed_drugs.sql
+*_seed*.sql
+
+# Docker local configs
+docker-compose.yml
+!docker-compose.prod.yml
+
+# Datasets
+dataset/
+*.csv
+
+# Database dumps and temp SQL
+*.dump
+healthmate_local.dump
+*.sql
+initdata.sql
+tmp_seed_drugs.sql
+*_seed*.sql
+
+# Docker local config
+docker-compose.yml
+
+# Datasets
+dataset/
