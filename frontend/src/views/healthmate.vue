@@ -101,6 +101,15 @@ function uniqueSchedules(schedules = []) {
   });
 }
 
+function uniqueById(items = []) {
+  const seen = new Set();
+  return (items || []).filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
 const activeMeds = computed(() => meds.value.filter((item) => item.isActive));
 
 const bmi = computed(() => {
@@ -128,10 +137,8 @@ onMounted(async () => {
     ]);
 
     profile.value = profileData;
-    const active = medsData?.active || [];
-    const inactive = medsData?.inactive || [];
-    // Keep intake marking visible even if all medications are currently inactive.
-    meds.value = [...active, ...inactive];
+    const active = uniqueById(medsData?.active || []);
+    meds.value = active;
 
     loadLocalStatuses();
 
@@ -337,13 +344,23 @@ async function toggleStatus(med, item, status) {
 
     intakeStore.value.marks[exactKey] = status;
     intakeStore.value.marks[timeOnlyKey] = status;
+    // For optimistic history store use the scheduled time as takenAt (not now)
+    const scheduledIso = (() => {
+      try {
+        const time = normalizeTime(item.timeOfDay || "00:00");
+        return new Date(`${dayKey}T${time}:00`).toISOString();
+      } catch {
+        return null;
+      }
+    })();
+
     upsertHistoryEntry({
       date: dayKey,
       medId: med.id,
       scheduleId: item.scheduleId,
       status,
       scheduledAt: item.timeOfDay || null,
-      takenAt: status === "taken" ? new Date().toISOString() : null,
+      takenAt: status === "taken" ? scheduledIso : null,
     });
     saveLocalStatuses();
 
@@ -367,6 +384,7 @@ async function toggleStatus(med, item, status) {
         status: response.status,
         scheduledAt: response.scheduledAt,
         takenAt: response.takenAt,
+        markedAt: response.markedAt,
       };
     }
     refreshMedItems(med);
@@ -578,7 +596,11 @@ function buildMedicationCalendar(med) {
       </p>
 
       <div class="mark-list">
-        <div v-for="med in meds" :key="med.id" class="mark-row full-width-row">
+        <div
+          v-for="med in activeMeds"
+          :key="med.id"
+          class="mark-row full-width-row"
+        >
           <div class="med-card-head">
             <div>
               <div class="mark-med-title">
@@ -720,6 +742,12 @@ function buildMedicationCalendar(med) {
                     <span class="status-text">{{
                       statusLabel(item.status)
                     }}</span>
+                    <div
+                      v-if="item.log?.markedAt"
+                      class="marked-at small muted"
+                    >
+                      Отмечено: {{ toLocalDateString(item.log.markedAt) }}
+                    </div>
                   </div>
 
                   <div v-else class="icons">
@@ -764,7 +792,7 @@ function buildMedicationCalendar(med) {
           </div>
         </div>
 
-        <div v-if="!meds.length" class="muted small empty-day-state">
+        <div v-if="!activeMeds.length" class="muted small empty-day-state">
           Нет препаратов для отметки. Добавьте лекарство в разделе "Мои
           лекарства".
         </div>

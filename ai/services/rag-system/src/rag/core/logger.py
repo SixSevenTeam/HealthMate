@@ -1,5 +1,6 @@
 """Настройка логирования через structlog."""
 
+import json
 import logging
 import sys
 import structlog
@@ -16,7 +17,13 @@ def setup_logging() -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
+            structlog.processors.JSONRenderer(
+                serializer=lambda obj, **kwargs: json.dumps(
+                    obj,
+                    ensure_ascii=False,
+                    default=str,
+                )
+            ),
         ]
     else:
         # Console format (для разработки)

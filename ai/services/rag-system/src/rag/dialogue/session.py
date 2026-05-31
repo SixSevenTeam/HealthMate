@@ -30,7 +30,9 @@ class Session:
     questions_asked: int = 0
     collected_symptoms: list[str] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
+    anamnesis_state: dict = field(default_factory=dict)
     clinical_summary: str = ""
+    provisional_diagnosis: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -61,6 +63,7 @@ class SessionManager:
 
     def __init__(self) -> None:
         from rag.core.config import settings
+
         self._redis = aioredis.from_url(
             settings.redis_url,
             decode_responses=True,

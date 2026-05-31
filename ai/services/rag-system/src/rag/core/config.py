@@ -1,14 +1,30 @@
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
+
+
+def _find_env_file() -> Path | None:
+    """Ищет .env файл начиная от текущего скрипта вверх по дереву."""
+    current = Path(__file__).resolve().parent
+    # Ищем до 10 уровней вверх
+    for _ in range(10):
+        env_file = current / ".env"
+        if env_file.exists():
+            return env_file
+        if current.parent == current:  # Дошли до корня
+            break
+        current = current.parent
+    return None
+
 
 class Settings(BaseSettings):
 
-    deepseek_api_key: str = Field(default="")
-    deepseek_base_url: str = Field(default="https://api.deepseek.com/v1")
+    deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(default="https://api.deepseek.com")
     llm_model: str = Field(default="deepseek-chat")
     llm_temperature: float = Field(default=0.7)
     llm_max_tokens: int = Field(default=4000)
@@ -28,37 +44,8 @@ class Settings(BaseSettings):
     # Vector Database (Qdrant)
     qdrant_url: str = Field(default="http://localhost:6333")
     qdrant_api_key: str | None = Field(default=None)
-    qdrant_collection_name: str = Field(default="medical_documents")
+    qdrant_collection_name: str = Field(default="drug_indications_recommendations")
     qdrant_timeout: int = Field(default=30)
-
-    # Kafka
-
-    kafka_bootstrap_servers: str = Field(default="localhost:9092")
-    kafka_input_topic: str = Field(
-        default="json-outgoing",
-        description="Topic с распарсенными документами от document-parser"
-    )
-    kafka_status_topic: str = Field(
-        default="document.status",
-        description="Topic для отправки статусов обработки"
-    )
-    kafka_consumer_group: str = Field(default="python-group")
-
-    # MinIO / S3
-    minio_endpoint: str = Field(default="localhost:9000")
-    minio_access_key: str = Field(default="admin")
-    minio_secret_key: str = Field(default="admin12345")
-    minio_secure: bool = Field(default=False)
-    minio_input_bucket: str = Field(
-        default="processed-json-doc",
-        description="Bucket откуда читаем распарсенные JSON"
-    )
-
-    # Обработка
-    temp_dir: str = Field(
-        default="/tmp/jsn-rag",
-        description="Каталог для временных json-файлов",
-    )
 
     # Retrieval (поиск)
     retrieval_top_k: int = Field(default=10)
@@ -67,9 +54,7 @@ class Settings(BaseSettings):
     hybrid_search_weight_lexical: float = Field(default=0.3)
 
     # Chunking
-
     embedding_batch_size: int = Field(default=100)
-
     chunk_size: int = Field(default=512)
     chunk_overlap: int = Field(default=128)
     min_chunk_size: int = Field(default=100)
@@ -79,55 +64,48 @@ class Settings(BaseSettings):
     anamnesis_timeout_seconds: int = Field(default=300)
 
     # API
-
     api_host: str = Field(default="0.0.0.0")
-    api_port: int = Field(default=8001)
-    api_workers: int = Field(default=4)
+    api_port: int = Field(default=8000)
+    api_workers: int = Field(default=1)
     api_reload: bool = Field(default=True)
+    internal_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "PYTHON_INTERNAL_API_KEY",
+            "INTERNAL_API_KEY",
+            "HEALTHMATE_INTERNAL_KEY",
+        ),
+    )
 
     # Логирование
     log_level: str = Field(default="INFO")
-    log_format: str = Field(
-        default="json",
-        description="Формат логов: json | console"
-    )
+    log_format: str = Field(default="json", description="Формат логов: json | console")
     structlog_dev_mode: bool = Field(default=True)
 
-    # PostgreSQL
-    postgres_host: str = Field(default="localhost")
-    postgres_port: int = Field(default=5432)
-    postgres_db: str = Field(default="rag_db")
-    postgres_user: str = Field(default="postgres")
-    postgres_password: str = Field(default="postgres")
-    postgres_pool_size: int = Field(default=10)
-    postgres_max_overflow: int = Field(default=20)
-
-
     # Redis
-
-    redis_url: str = Field(default="redis://localhost:6379/0")
+    redis_url: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
     redis_ttl: int = Field(default=3600)
 
-    # Observability
+    # Dataset root for local indexing (mounted from docker-compose)
+    dataset_root: str = Field(default="/app/dataset/healthmate_2018-2023/data")
 
+    # Backend (Java) URL — used to resolve drugs and media
+    backend_url: str = Field(default="http://localhost:8080", validation_alias="BACKEND_URL")
+    # Backend authentication (optional). If set, client will send header
+    # `backend_auth_header_name: backend_auth_token` with requests to backend.
+    backend_auth_header_name: str = Field(default="Authorization")
+    backend_auth_token: str = Field(default="", validation_alias="BACKEND_AUTH_TOKEN")
+    # Observability
     enable_metrics: bool = Field(default=True)
     metrics_port: int = Field(default=9090)
     enable_tracing: bool = Field(default=False)
     jaeger_endpoint: str | None = Field(default=None)
-
-
-    @property
-    def postgres_url(self) -> str:
-        """PostgreSQL connection URL."""
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
-
+    
     model_config = {
-        "env_file": ".env",
+        "env_file": _find_env_file(),
         "env_file_encoding": "utf-8",
         "case_sensitive": False,
+        "extra": "ignore",
     }
 
 

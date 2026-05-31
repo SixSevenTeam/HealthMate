@@ -75,6 +75,11 @@ class AiChatResponse(BaseModel):
     content: str
     messageType: str = Field(alias="messageType")
     anamnesisState: dict[str, Any] | None = Field(default=None, alias="anamnesisState")
+    question: str | None = None
+    answerOptions: list[dict[str, Any]] = Field(default_factory=list, alias="answerOptions")
+    allowFreeText: bool = Field(default=True, alias="allowFreeText")
+    inputMode: str | None = Field(default=None, alias="inputMode")
+    rationale: str | None = None
     drugReferenceId: str | None = Field(default=None, alias="drugReferenceId")
     ragSource: str | None = Field(default=None, alias="ragSource")
     recommendedDrugs: list[dict[str, Any]] = Field(default_factory=list, alias="recommendedDrugs")
@@ -147,8 +152,18 @@ async def ai_chat(
         user_id=request.userContext.userId,
     )
 
+    # Log full incoming request payload (alias keys) for debugging
+    try:
+        log.debug("ai_chat_request_payload", payload=request.dict(by_alias=True))
+    except Exception:
+        log.debug("ai_chat_request_payload_failed")
     try:
         query_request = _to_query_request(request)
+        # Log converted internal QueryRequest for traceability
+        try:
+            log.debug("converted_query_request", query_request=str(query_request))
+        except Exception:
+            log.debug("converted_query_request_failed")
         result = await dialogue_service.process_query(query_request)
 
         # Определяем messageType по response_type из DialogueService
@@ -161,15 +176,13 @@ async def ai_chat(
         }
         message_type = message_type_map.get(result.response_type, result.response_type)
 
-        # Формируем anamnesisState для Java
-        anamnesis_state: dict[str, Any] | None = None
-        if result.stage in ("anamnesis_collection", "context_synthesis"):
-            anamnesis_state = {"stage": "collecting"}
-        elif result.stage == "recommendation":
+        payload = result.content if isinstance(result.content, dict) else {}
+        anamnesis_state: dict[str, Any] | None = payload.get("anamnesis_state")
+        if result.stage == "recommendation":
             anamnesis_state = {"stage": "completed"}
 
         # Собираем recommendedDrugs (если есть в content)
-        recommended_drugs: list[dict[str, Any]] = result.content.get("recommended_drugs", [])
+        recommended_drugs: list[dict[str, Any]] = payload.get("recommended_drugs", [])
 
         # ragSource из первого найденного документа
         rag_source: str | None = None
@@ -177,15 +190,28 @@ async def ai_chat(
             first = result.context_used.retrieved_documents[0]
             rag_source = first.document_id
 
-        return AiChatResponse(
-            content=result.content.get("message", ""),
+        response_obj = AiChatResponse(
+            content=str(payload.get("message", "")),
             messageType=message_type,
             anamnesisState=anamnesis_state,
+            question=payload.get("question"),
+            answerOptions=payload.get("answer_options", []),
+            allowFreeText=bool(payload.get("allow_free_text", True)),
+            inputMode=payload.get("input_mode"),
+            rationale=payload.get("rationale"),
             drugReferenceId=result.content.get("drug_reference_id"),
             ragSource=rag_source,
             recommendedDrugs=recommended_drugs,
-            disclaimer=result.content.get("disclaimer"),
+            disclaimer=payload.get("disclaimer"),
         )
+
+        # Log full response payload (alias keys) for debugging
+        try:
+            log.info("ai_chat_response", response=response_obj.dict(by_alias=True))
+        except Exception:
+            log.info("ai_chat_response_failed")
+
+        return response_obj
 
     except Exception as exc:
         log.error(

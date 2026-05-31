@@ -40,6 +40,10 @@ function saveHiddenDeleted(set) {
 
 const hiddenDeletedMedicationIds = loadHiddenDeleted();
 const loading = ref(false);
+const validatingMedication = ref(false);
+const validationResult = ref(null);
+const showValidationModal = ref(false);
+const medicationSuccessAdded = ref(false);
 const errorMessage = ref("");
 const validationErrors = ref({});
 const notice = ref("");
@@ -90,13 +94,16 @@ function getDoseLabel(unit) {
 }
 
 function translateScheduleError(error) {
-  const fieldMessages = error?.fields ? Object.values(error.fields).filter(Boolean) : [];
+  const fieldMessages = error?.fields
+    ? Object.values(error.fields).filter(Boolean)
+    : [];
   if (fieldMessages.length > 0) {
     return fieldMessages
       .map((message) => {
         if (message.includes("must not be empty")) return "Заполните это поле";
         if (message.includes("must not be null")) return "Заполните это поле";
-        if (message.includes("must be greater than or equal to")) return "Выберите корректное значение";
+        if (message.includes("must be greater than or equal to"))
+          return "Выберите корректное значение";
         return message;
       })
       .join("; ");
@@ -117,7 +124,7 @@ function translateScheduleError(error) {
 
 function validateForm() {
   validationErrors.value = {};
-  
+
   if (!form.value.customName?.trim()) {
     validationErrors.value.customName = "Введите название лекарства";
   }
@@ -133,7 +140,7 @@ function validateForm() {
   if (!form.value.startDate) {
     validationErrors.value.startDate = "Выберите дату начала";
   }
-  
+
   return Object.keys(validationErrors.value).length === 0;
 }
 
@@ -181,12 +188,14 @@ function selectDrug(drug) {
 async function onCreate() {
   notice.value = "";
   errorMessage.value = "";
-  
+  medicationSuccessAdded.value = false;
+
   if (!validateForm()) {
     return;
   }
-  
+
   try {
+    validatingMedication.value = true;
     const validation = await validateMedication({
       drugId: form.value.drugId,
       customName: form.value.customName,
@@ -196,48 +205,89 @@ async function onCreate() {
       startDate: form.value.startDate,
       endDate: form.value.endDate,
     });
+    validatingMedication.value = false;
 
-    const filteredWarnings = (validation?.warnings || []).filter(
-      (warning) => !warning.toLowerCase().includes("safety validation is temporarily unavailable"),
-    );
+    validationResult.value = validation;
 
-    if (filteredWarnings.length > 0) {
-      notice.value = filteredWarnings.join("; ");
+    if (validation?.status === "ok") {
+      await finalizeMedicationCreation();
+      medicationSuccessAdded.value = true;
+      setTimeout(() => {
+        medicationSuccessAdded.value = false;
+      }, 2000);
+    } else if (
+      validation?.status === "warning" ||
+      validation?.status === "danger"
+    ) {
+      showValidationModal.value = true;
+    } else {
+      await finalizeMedicationCreation();
     }
-
-    await createMedication({
-      drugId: form.value.drugId,
-      customName: form.value.customName,
-      doseAmount: Number(form.value.doseAmount),
-      doseUnit:
-        form.value.doseUnit === "other"
-          ? form.value.customDoseUnit.trim()
-          : form.value.doseUnit,
-      instructions: form.value.instructions,
-      startDate: form.value.startDate,
-      endDate: form.value.endDate,
-      schedules: form.value.schedules.map((schedule) => ({
-        timeOfDay: schedule.timeOfDay,
-        daysOfWeek: schedule.daysOfWeek,
-      })),
-    });
-
-    form.value = {
-      drugId: null,
-      customName: "",
-      doseAmount: 0,
-      doseUnit: "mg",
-      customDoseUnit: "",
-      instructions: "",
-      startDate: new Date().toISOString().slice(0, 10),
-      endDate: null,
-      schedules: [{ timeOfDay: "08:00:00", daysOfWeek: [1, 2, 3, 4, 5] }],
-    };
-    validationErrors.value = {};
-    await loadMedications();
   } catch (error) {
+    validatingMedication.value = false;
     errorMessage.value = error.message || "Не удалось добавить лекарство";
   }
+}
+
+async function onConfirmMedication(confirmed) {
+  showValidationModal.value = false;
+
+  if (confirmed) {
+    try {
+      await finalizeMedicationCreation();
+      medicationSuccessAdded.value = true;
+      setTimeout(() => {
+        medicationSuccessAdded.value = false;
+      }, 2000);
+    } catch (error) {
+      errorMessage.value = error.message || "Не удалось добавить лекарство";
+    }
+  }
+  validationResult.value = null;
+}
+
+async function finalizeMedicationCreation() {
+  const filteredWarnings = (validationResult.value?.warnings || []).filter(
+    (warning) =>
+      !warning
+        .toLowerCase()
+        .includes("safety validation is temporarily unavailable"),
+  );
+
+  if (filteredWarnings.length > 0) {
+    notice.value = filteredWarnings.join("; ");
+  }
+
+  await createMedication({
+    drugId: form.value.drugId,
+    customName: form.value.customName,
+    doseAmount: Number(form.value.doseAmount),
+    doseUnit:
+      form.value.doseUnit === "other"
+        ? form.value.customDoseUnit.trim()
+        : form.value.doseUnit,
+    instructions: form.value.instructions,
+    startDate: form.value.startDate,
+    endDate: form.value.endDate,
+    schedules: form.value.schedules.map((schedule) => ({
+      timeOfDay: schedule.timeOfDay,
+      daysOfWeek: schedule.daysOfWeek,
+    })),
+  });
+
+  form.value = {
+    drugId: null,
+    customName: "",
+    doseAmount: 0,
+    doseUnit: "mg",
+    customDoseUnit: "",
+    instructions: "",
+    startDate: new Date().toISOString().slice(0, 10),
+    endDate: null,
+    schedules: [{ timeOfDay: "08:00:00", daysOfWeek: [1, 2, 3, 4, 5] }],
+  };
+  validationErrors.value = {};
+  await loadMedications();
 }
 
 async function onToggle(item) {
@@ -441,14 +491,20 @@ onMounted(loadMedications);
             class="input"
             :class="{ 'input-error': validationErrors.doseUnit }"
           >
-            <option v-for="opt in doseUnitOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            <option
+              v-for="opt in doseUnitOptions"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </option>
           </select>
           <input
             v-if="form.doseUnit === 'other'"
             v-model="form.customDoseUnit"
             class="input"
             placeholder="Введите свою единицу (например: капс.)"
-            style="margin-top:8px;"
+            style="margin-top: 8px"
           />
           <p v-if="validationErrors.doseUnit" class="error-text">
             {{ validationErrors.doseUnit }}
@@ -479,15 +535,19 @@ onMounted(loadMedications);
 
         <div class="form-field">
           <label class="form-label">Дата окончания (опционально)</label>
-          <input
-            v-model="form.endDate"
-            class="input"
-            type="date"
-          />
+          <input v-model="form.endDate" class="input" type="date" />
         </div>
 
-        <button class="btn" type="button" @click="onCreate" style="grid-column: 1 / -1;">
-          Сохранить лекарство
+        <button
+          class="btn"
+          type="button"
+          @click="onCreate"
+          style="grid-column: 1 / -1"
+          :disabled="validatingMedication"
+        >
+          <span v-if="validatingMedication" class="spinner"></span>
+          <span v-else-if="medicationSuccessAdded">✓ Добавлено!</span>
+          <span v-else>Сохранить лекарство</span>
         </button>
       </div>
       <p v-if="notice" class="small warning">⚠️ {{ notice }}</p>
@@ -518,8 +578,14 @@ onMounted(loadMedications);
               <button
                 class="icon-action-btn"
                 type="button"
-                :title="item.isActive ? 'Активно (нажмите, чтобы приостановить)' : 'Приостановлено (нажмите, чтобы включить)'"
-                :aria-label="item.isActive ? 'Приостановить препарат' : 'Включить препарат'"
+                :title="
+                  item.isActive
+                    ? 'Активно (нажмите, чтобы приостановить)'
+                    : 'Приостановлено (нажмите, чтобы включить)'
+                "
+                :aria-label="
+                  item.isActive ? 'Приостановить препарат' : 'Включить препарат'
+                "
                 @click.stop="onToggle(item)"
               >
                 <Icon
@@ -535,11 +601,7 @@ onMounted(loadMedications);
                 aria-label="Удалить из списка"
                 @click.stop="onDeactivate(item)"
               >
-                <Icon
-                  name="medDelete"
-                  :size="20"
-                  className="med-delete-icon"
-                />
+                <Icon name="medDelete" :size="20" className="med-delete-icon" />
               </button>
             </div>
           </div>
@@ -579,12 +641,20 @@ onMounted(loadMedications);
                     aria-label="Удалить время приема"
                     @click="onDeleteSchedule(item.id, sch.id)"
                   >
-                    <Icon name="medDelete" :size="18" className="schedule-delete-icon" />
+                    <Icon
+                      name="medDelete"
+                      :size="18"
+                      className="schedule-delete-icon"
+                    />
                   </button>
                 </li>
               </ul>
               <p v-else class="small muted">Нет расписания</p>
-              <button type="button" class="btn small" @click="openScheduleModal(item.id)">
+              <button
+                type="button"
+                class="btn small"
+                @click="openScheduleModal(item.id)"
+              >
                 + Добавить время приема
               </button>
             </div>
@@ -595,13 +665,19 @@ onMounted(loadMedications);
   </section>
 
   <!-- Modal for adding schedule -->
-  <div v-if="showScheduleModal" class="modal-overlay" @click.self="closeScheduleModal">
+  <div
+    v-if="showScheduleModal"
+    class="modal-overlay"
+    @click.self="closeScheduleModal"
+  >
     <div class="modal-dialog">
       <div class="modal-header">
         <h3 class="modal-title">Добавить время приема</h3>
-        <button type="button" class="modal-close" @click="closeScheduleModal">×</button>
+        <button type="button" class="modal-close" @click="closeScheduleModal">
+          ×
+        </button>
       </div>
-      
+
       <div class="modal-body">
         <div class="form-field">
           <label class="form-label">Время приема</label>
@@ -617,7 +693,11 @@ onMounted(loadMedications);
         <div class="form-field">
           <label class="form-label">Дни недели</label>
           <div class="days-grid">
-            <label v-for="(day, idx) in dayNames" :key="idx" class="day-checkbox">
+            <label
+              v-for="(day, idx) in dayNames"
+              :key="idx"
+              class="day-checkbox"
+            >
               <input
                 type="checkbox"
                 :checked="scheduleForm.daysOfWeek.includes(idx + 1)"
@@ -639,6 +719,87 @@ onMounted(loadMedications);
         </button>
         <button type="button" class="btn" @click="onAddSchedule">
           Добавить
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Validation Warning Modal -->
+  <div
+    v-if="showValidationModal"
+    class="modal-overlay"
+    @click="onConfirmMedication(false)"
+  >
+    <div class="modal-dialog" @click.stop>
+      <div class="modal-header">
+        <h3 class="modal-title">
+          <span v-if="validationResult?.status === 'danger'">⚠️ Опасно!</span>
+          <span v-else>⚠️ Предупреждение</span>
+        </h3>
+        <button
+          type="button"
+          class="modal-close"
+          @click="onConfirmMedication(false)"
+          aria-label="Закрыть"
+        >
+          ✕
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="small muted">
+          <strong
+            >Система обнаружила потенциальные проблемы с безопасностью:</strong
+          >
+        </p>
+        <div
+          v-if="
+            validationResult?.blockers && validationResult.blockers.length > 0
+          "
+          class="warnings"
+        >
+          <p class="small"><strong>Критичные проблемы:</strong></p>
+          <ul>
+            <li
+              v-for="(blocker, idx) in validationResult.blockers"
+              :key="'blocker-' + idx"
+              class="small"
+            >
+              {{ blocker }}
+            </li>
+          </ul>
+        </div>
+        <div
+          v-if="
+            validationResult?.warnings && validationResult.warnings.length > 0
+          "
+          class="warnings"
+        >
+          <p class="small"><strong>Предупреждения:</strong></p>
+          <ul>
+            <li
+              v-for="(warning, idx) in validationResult.warnings"
+              :key="'warning-' + idx"
+              class="small"
+            >
+              {{ warning }}
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button
+          type="button"
+          class="btn secondary"
+          @click="onConfirmMedication(false)"
+        >
+          Отменить
+        </button>
+        <button
+          type="button"
+          class="btn danger"
+          @click="onConfirmMedication(true)"
+        >
+          Добавить несмотря на предупреждение
         </button>
       </div>
     </div>
@@ -846,6 +1007,83 @@ onMounted(loadMedications);
   font-weight: 600;
   color: #111;
   margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  color: #111;
+}
+
+.modal-body {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+  max-height: 400px;
+}
+
+.modal-footer {
+  padding: 20px;
+  border-top: 1px solid #eaeaf2;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.modal-footer .btn {
+  margin: 0;
+}
+
+.btn.secondary {
+  background: #f0f0f0;
+  color: #111;
+}
+
+.btn.secondary:hover {
+  background: #e0e0e0;
+}
+
+.btn.danger {
+  background: #dc3545;
+  color: white;
+}
+
+.btn.danger:hover {
+  background: #c82333;
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 1s ease-in-out infinite;
+  margin-right: 8px;
+}
+
+.btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .modal-close {

@@ -160,6 +160,11 @@ public class ChatController {
         response.put("userMessage", userMessage);
         response.put("assistantMessage", assistantMessage);
         response.put("messageType", aiResponse.getMessageType());
+        response.put("question", aiResponse.getQuestion());
+        response.put("answerOptions", aiResponse.getAnswerOptions());
+        response.put("allowFreeText", aiResponse.getAllowFreeText());
+        response.put("inputMode", aiResponse.getInputMode());
+        response.put("anamnesisState", aiResponse.getAnamnesisState());
         response.put("disclaimer", aiResponse.getDisclaimer());
         response.put("recommendedDrugs", aiResponse.getRecommendedDrugs());
         return ResponseEntity.ok(response);

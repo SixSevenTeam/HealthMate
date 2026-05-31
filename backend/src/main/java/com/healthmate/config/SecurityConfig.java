@@ -76,8 +76,16 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/healthmate/api/drugs/assets/**",
                                 "/healthmate/api/drugs/img/**",
+                                "/healthmate/api/drugs/mappings",
+                                "/healthmate/api/drugs/*/details",
+                                "/healthmate/api/drugs/*/pack-image",
+                                "/healthmate/api/drugs/*",
                                 "/api/drugs/assets/**",
                                 "/api/drugs/img/**",
+                                "/api/drugs/mappings",
+                                "/api/drugs/*/details",
+                                "/api/drugs/*/pack-image",
+                                "/api/drugs/*",
                                 "/assets/**",
                                 "/img/**"
                         )

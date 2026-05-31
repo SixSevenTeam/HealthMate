@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import structlog
 from sentence_transformers import SentenceTransformer
@@ -37,7 +38,12 @@ class EmbeddingService:
         """Lazy-load модели при первом вызове."""
         if self._model is None:
             log.info("loading_embedding_model", model=self._model_name)
-            self._model = SentenceTransformer(self._model_name)
+            device = os.environ.get("EMBEDDING_DEVICE")
+            if device:
+                log.info("embedding_device_selected", device=device)
+                self._model = SentenceTransformer(self._model_name, device=device)
+            else:
+                self._model = SentenceTransformer(self._model_name)
             log.info("embedding_model_loaded", model=self._model_name)
         return self._model
 

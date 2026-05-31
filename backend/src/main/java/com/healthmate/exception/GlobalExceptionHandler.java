@@ -45,7 +45,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleBadCredentials(BadCredentialsException ex) {
         ErrorResponse response = new ErrorResponse(
             "INVALID_CREDENTIALS",
-            "Invalid email or password",
+            "Invalid email or password, error is " + ex.getMessage(),
             null,
             Instant.now()
         );
@@ -155,7 +155,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleAiServiceUnavailable(AiServiceUnavailableException ex) {
         ErrorResponse response = new ErrorResponse(
             "AI_SERVICE_UNAVAILABLE",
-            "AI service is temporarily unavailable",
+            ex.getMessage(),
             null,
             Instant.now()
         );
@@ -167,7 +167,7 @@ public class GlobalExceptionHandler {
         log.error("Unexpected error", ex);
         ErrorResponse response = new ErrorResponse(
             "INTERNAL_ERROR",
-            "An unexpected error occurred",
+            "An unexpected error occurred" + ex.getMessage(),
             null,
             Instant.now()
         );

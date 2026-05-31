@@ -1,5 +1,0 @@
-{
-  "messageType": "answer",
-  "anamnesisState": {"stage": "completed"},
-  "required_fields": ["content", "messageType", "anamnesisState", "drugReferenceId", "ragSource", "recommendedDrugs", "disclaimer"]
-}

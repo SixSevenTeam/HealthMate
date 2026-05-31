@@ -4,6 +4,7 @@
 *.ipr
 *.iws
 .vscode/
+dataset/backup.snapshot
 
 # OS
 .DS_Store
@@ -18,6 +19,8 @@ Thumbs.db
 *.jar
 *.war
 *.ear
+/2_task
+/2_task.zip
 
 # Python
 __pycache__/

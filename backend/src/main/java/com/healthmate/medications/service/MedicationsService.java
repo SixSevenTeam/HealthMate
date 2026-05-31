@@ -25,6 +25,8 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -57,6 +59,37 @@ public class MedicationsService {
 
     public List<Drug> searchDrugs(String query) {
         return drugRepository.searchByQuery(query);
+    }
+
+    public List<com.healthmate.medications.dto.DrugMappingResponse> getAllDrugMappings() {
+        List<Drug> all = drugRepository.findAll();
+        Pattern p = Pattern.compile("(doc_\\d+\\.htm)", Pattern.CASE_INSENSITIVE);
+        return all.stream()
+            .map(d -> {
+                String source = d.getSourceFile();
+                if (source == null || source.isBlank()) {
+                    String details = d.getDetailsHtmlPath();
+                    if (details != null && !details.isBlank()) {
+                        Matcher m = p.matcher(details);
+                        if (m.find()) {
+                            source = m.group(1);
+                        } else {
+                            try {
+                                source = Paths.get(details).getFileName().toString();
+                            } catch (Exception ex) {
+                                source = details;
+                            }
+                        }
+                    }
+                }
+
+                return com.healthmate.medications.dto.DrugMappingResponse.builder()
+                    .id(d.getId())
+                    .sourceFile(source)
+                    .detailsHtmlPath(d.getDetailsHtmlPath())
+                    .build();
+            })
+            .toList();
     }
 
     public Drug getDrugById(UUID drugId) {
@@ -248,9 +281,12 @@ public class MedicationsService {
 
         intakeLog.setStatus(normalizedStatus);
         if ("taken".equals(normalizedStatus)) {
-            intakeLog.setTakenAt(Instant.now());
+            // takenAt should reflect the scheduled time; markedAt stores moment of user action
+            intakeLog.setTakenAt(intakeLog.getScheduledAt());
+            intakeLog.setMarkedAt(Instant.now());
         } else {
             intakeLog.setTakenAt(null);
+            intakeLog.setMarkedAt(Instant.now());
         }
         intakeLog.setConfirmedVia("app");
         IntakeLog updated = intakeLogRepository.save(intakeLog);
@@ -284,9 +320,12 @@ public class MedicationsService {
 
         intakeLog.setStatus(normalizedStatus);
         if ("taken".equals(normalizedStatus)) {
-            intakeLog.setTakenAt(Instant.now());
+            // When user marks intake for a specific date, record takenAt as scheduledAt
+            intakeLog.setTakenAt(scheduledAt);
+            intakeLog.setMarkedAt(Instant.now());
         } else {
             intakeLog.setTakenAt(null);
+            intakeLog.setMarkedAt(Instant.now());
         }
         intakeLog.setConfirmedVia("app");
 
@@ -302,9 +341,11 @@ public class MedicationsService {
 
             existing.setStatus(normalizedStatus);
             if ("taken".equals(normalizedStatus)) {
-                existing.setTakenAt(Instant.now());
+                existing.setTakenAt(scheduledAt);
+                existing.setMarkedAt(Instant.now());
             } else {
                 existing.setTakenAt(null);
+                existing.setMarkedAt(Instant.now());
             }
             existing.setConfirmedVia("app");
 
@@ -327,7 +368,13 @@ public class MedicationsService {
         
         medication.setIsActive(false);
         userMedicationRepository.save(medication);
-        log.info("Medication deactivated: {}", id);
+        // Remove future pending logs — deactivation affects only future expected doses
+        intakeLogRepository.deleteByUserMedicationIdAndStatusAndScheduledAtGreaterThan(
+            id,
+            "pending",
+            Instant.now()
+        );
+        log.info("Medication deactivated and future pending logs removed: {}", id);
     }
 
     @Transactional
@@ -336,6 +383,17 @@ public class MedicationsService {
         medication.setIsActive(isActive);
         UserMedication saved = userMedicationRepository.save(medication);
         log.info("Medication active status changed: {} -> {}", id, isActive);
+        if (Boolean.TRUE.equals(isActive)) {
+            // When activating, regenerate future pending logs according to schedules and medication dates
+            regenerateFuturePendingLogs(id);
+        } else {
+            // When deactivating via this method, remove future pending logs
+            intakeLogRepository.deleteByUserMedicationIdAndStatusAndScheduledAtGreaterThan(
+                id,
+                "pending",
+                Instant.now()
+            );
+        }
         return saved;
     }
 

@@ -13,9 +13,16 @@ const recoveredDailySeries = ref([]);
 const viewMode = ref(
   recoveredDailySeries.value.length > 0 ? "daily" : "medication",
 );
+const medicationScope = ref("active");
 const periodPreset = ref("7d");
 const fromDate = ref("");
 const toDate = ref("");
+
+const scopeOptions = [
+  { value: "active", label: "Активные" },
+  { value: "inactive", label: "Неактивные" },
+  { value: "all", label: "Все" },
+];
 
 const presetOptions = [
   { value: "7d", label: "7 дней" },
@@ -120,7 +127,33 @@ function normalizeStatus(log) {
   return "missed";
 }
 
-async function rebuildDailySeriesFromLogs(from, to) {
+function uniqueById(items = []) {
+  const seen = new Set();
+  return (items || []).filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+function getScopedMedications(medsResponse, scope) {
+  const active = uniqueById(medsResponse?.active || []);
+  const inactive = uniqueById(medsResponse?.inactive || []);
+
+  if (scope === "inactive") {
+    return inactive;
+  }
+  if (scope === "all") {
+    return [...active, ...inactive];
+  }
+  return active;
+}
+
+async function rebuildDailySeriesFromLogs(
+  from,
+  to,
+  scope = medicationScope.value,
+) {
   const fromParsed = parseDateInput(from);
   const toParsed = parseDateInput(to);
   if (!fromParsed || !toParsed || fromParsed > toParsed) {
@@ -144,10 +177,7 @@ async function rebuildDailySeriesFromLogs(from, to) {
   }
 
   const medsResponse = await getMedications(0, 200);
-  const allMeds = [
-    ...(medsResponse?.active || []),
-    ...(medsResponse?.inactive || []),
-  ];
+  const allMeds = getScopedMedications(medsResponse, scope);
   if (allMeds.length === 0) {
     return Array.from(byDate.values());
   }
@@ -316,7 +346,11 @@ function loadStatistics() {
   errorMessage.value = "";
   recoveredDailySeries.value = [];
 
-  return getDashboardSummary(fromDate.value, toDate.value)
+  return getDashboardSummary(
+    fromDate.value,
+    toDate.value,
+    medicationScope.value,
+  )
     .then(async (data) => {
       summary.value = data;
 
@@ -326,6 +360,7 @@ function loadStatistics() {
         recoveredDailySeries.value = await rebuildDailySeriesFromLogs(
           fromDate.value,
           toDate.value,
+          medicationScope.value,
         );
       }
     })
@@ -352,6 +387,10 @@ function applyCustomPeriod() {
     applyPreset("7d");
     periodPreset.value = "custom";
   }
+  loadStatistics();
+}
+
+function handleScopeChange() {
   loadStatistics();
 }
 
@@ -427,6 +466,25 @@ onUnmounted(() => {
           style="align-self: flex-end"
         >
           Показать период
+        </button>
+      </div>
+    </article>
+
+    <article class="card">
+      <h2 class="card-title">Фильтр лекарств</h2>
+      <div class="scope-toolbar">
+        <button
+          v-for="option in scopeOptions"
+          :key="option.value"
+          class="btn"
+          :class="{ active: medicationScope === option.value }"
+          type="button"
+          @click="
+            medicationScope = option.value;
+            handleScopeChange();
+          "
+        >
+          {{ option.label }}
         </button>
       </div>
     </article>
@@ -623,6 +681,13 @@ onUnmounted(() => {
   grid-template-columns: 220px 1fr auto;
   gap: 14px;
   align-items: end;
+}
+
+.scope-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
 .card-headline {

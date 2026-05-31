@@ -44,7 +44,9 @@ public class DashboardController {
         @Parameter(description = "Start date (inclusive), format: yyyy-MM-dd. Defaults to 7 days ago", example = "2026-04-01")
         @RequestParam(required = false) LocalDate from,
         @Parameter(description = "End date (inclusive), format: yyyy-MM-dd. Defaults to today", example = "2026-04-07")
-        @RequestParam(required = false) LocalDate to) {
+        @RequestParam(required = false) LocalDate to,
+        @Parameter(description = "Medication scope: active, inactive, or all", example = "active")
+        @RequestParam(defaultValue = "active") String scope) {
 
         LocalDate toDate = to != null ? to : LocalDate.now();
         LocalDate fromDate = from != null ? from : toDate.minusDays(6);
@@ -54,7 +56,7 @@ public class DashboardController {
         }
 
         UUID userId = getUserId();
-        DashboardSummaryResponse summary = dashboardService.getSummary(userId, fromDate, toDate);
+        DashboardSummaryResponse summary = dashboardService.getSummary(userId, fromDate, toDate, scope);
 
         return ResponseEntity.ok(summary);
     }

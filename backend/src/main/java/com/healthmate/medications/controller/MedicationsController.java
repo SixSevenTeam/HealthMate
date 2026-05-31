@@ -271,6 +271,7 @@ public class MedicationsController {
                 .id(log.getId())
                 .scheduledAt(log.getScheduledAt())
                 .takenAt(log.getTakenAt())
+                .markedAt(log.getMarkedAt())
                 .status(log.getStatus())
                 .confirmedVia(log.getConfirmedVia())
                 .build())

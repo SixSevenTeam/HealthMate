@@ -130,12 +130,28 @@ class ChunkingService:
                 )
             ]
 
-        paragraphs = text.split("\n\n")
+        paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
         chunks: list[Chunk] = []
         current_text = ""
 
         for para in paragraphs:
-            candidate = (current_text + "\n\n" + para).strip() if current_text else para.strip()
+            if len(para) > self.chunk_size:
+                if current_text.strip():
+                    chunks.append(
+                        Chunk(
+                            text=current_text.strip(),
+                            metadata={"section_path": list(path)},
+                            chunk_index=0,
+                            section_path=list(path),
+                            page_starts_at=page_starts_at,
+                        )
+                    )
+                    current_text = ""
+
+                chunks.extend(self._split_long_paragraph(para, path, page_starts_at))
+                continue
+
+            candidate = (current_text + "\n\n" + para).strip() if current_text else para
 
             if len(candidate) > self.chunk_size and current_text:
                 chunks.append(
@@ -147,7 +163,7 @@ class ChunkingService:
                         page_starts_at=page_starts_at,
                     )
                 )
-                current_text = para.strip()
+                current_text = para
             else:
                 current_text = candidate
 
@@ -163,6 +179,82 @@ class ChunkingService:
             )
 
         return chunks
+
+    def _split_long_paragraph(
+        self,
+        text: str,
+        path: list[str],
+        page_starts_at: int | None = None,
+    ) -> list[Chunk]:
+        """Режет слишком длинный абзац на подчанки с overlap."""
+        if self.chunk_size <= 0:
+            return []
+
+        step = max(1, self.chunk_size - self.chunk_overlap)
+        chunks: list[Chunk] = []
+        start = 0
+
+        while start < len(text):
+            end = min(len(text), start + self.chunk_size)
+
+            if end < len(text):
+                boundary = self._find_boundary(text, start, end)
+                if boundary > start:
+                    end = boundary
+
+            piece = text[start:end].strip()
+            if piece:
+                chunks.append(
+                    Chunk(
+                        text=piece,
+                        metadata={"section_path": list(path)},
+                        chunk_index=0,
+                        section_path=list(path),
+                        page_starts_at=page_starts_at,
+                    )
+                )
+
+            if end >= len(text):
+                break
+
+            next_start = max(end - self.chunk_overlap, start + step)
+            if next_start <= start:
+                next_start = start + step
+            start = min(next_start, len(text))
+
+        return chunks
+
+    @staticmethod
+    def _find_boundary(text: str, start: int, end: int) -> int:
+        """Ищет естественную границу рядом с end, предпочитая пробел или перенос строки.
+        
+        Гарантирует разрезание по словам, а не посередине слова.
+        """
+        if end >= len(text):
+            return end
+            
+        # Сначала ищем в окне 80 символов перед end (предпочитаемые символы)
+        preferred_chars = ["\n", " ", ".", "!", "?"]
+        search_start = max(start + 1, end - 80)
+        
+        for char in preferred_chars:
+            boundary = text.rfind(char, search_start, end)
+            if boundary > start + 20:
+                return boundary + 1
+        
+        # Если не нашли в окне, ищем последний пробел от start до end
+        # (пробел — самый надежный разделитель слов)
+        last_space = text.rfind(" ", start + 1, end)
+        if last_space > start + 20:
+            return last_space + 1
+        
+        # Как последний вариант, ищем любой пробел в разумном диапазоне
+        last_space = text.rfind(" ", max(start, end - 200), end)
+        if last_space > start:
+            return last_space + 1
+        
+        # Если совсем нет пробелов, режем после end (может быть одно длинное слово)
+        return end
 
     def _merge_small_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
         """Объединяет слишком маленькие соседние чанки.

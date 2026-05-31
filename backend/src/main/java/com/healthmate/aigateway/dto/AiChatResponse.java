@@ -20,6 +20,21 @@ public class AiChatResponse {
     @JsonProperty("anamnesisState")
     private Map<String, Object> anamnesisState;
 
+    @JsonProperty("question")
+    private String question;
+
+    @JsonProperty("answerOptions")
+    private java.util.List<Map<String, Object>> answerOptions;
+
+    @JsonProperty("allowFreeText")
+    private Boolean allowFreeText;
+
+    @JsonProperty("inputMode")
+    private String inputMode;
+
+    @JsonProperty("rationale")
+    private String rationale;
+
     @JsonProperty("drugReferenceId")
     private String drugReferenceId;
 
