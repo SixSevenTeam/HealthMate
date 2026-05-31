@@ -1,9 +1,0 @@
-{
-  "age": 30,
-  "gender": "male",
-  "allergies": ["аспирин"],
-  "chronic_conditions": [{"name": "гипертония"}],
-  "current_medications": [
-    {"name": "лизиноприл", "dosage": "10 мг", "frequency": "1 раз/день"}
-  ]
-}

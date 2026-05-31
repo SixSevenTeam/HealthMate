@@ -1,5 +1,0 @@
-{
-  "messageType": "question",
-  "anamnesisState": {"stage": "collecting"},
-  "_comment": "content is dynamic (from LLM), disclaimer may be null at anamnesis stage"
-}

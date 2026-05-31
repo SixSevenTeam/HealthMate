@@ -1,4 +1,0 @@
-{
-  "status": "ok",
-  "required_fields": ["status", "warnings", "blockers", "metadata"]
-}
