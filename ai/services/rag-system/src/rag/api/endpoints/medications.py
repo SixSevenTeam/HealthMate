@@ -8,6 +8,7 @@ Java вызывает этот endpoint из AIGatewayService.validateMedication
 from __future__ import annotations
 
 from typing import Any
+import re
 
 import structlog
 from fastapi import APIRouter, HTTPException, status
@@ -21,6 +22,32 @@ import json
 log = structlog.get_logger()
 
 router = APIRouter()
+
+
+def _extract_json_from_llm_response(response: str, max_attempts: int = 3) -> dict[str, Any] | None:
+    """Извлекает JSON из ответа LLM, даже если он обёрнут в текст."""
+    response = response.strip()
+    try:
+        return json.loads(response)
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    match = re.search(r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]', response, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    log.warning("json_extraction_failed", response_length=len(response), response_start=response[:100])
+    return None
 
 
 
@@ -280,10 +307,9 @@ async def validate_medication(
             max_tokens=1000,
         )
 
-        try:
-            parsed = json.loads(llm_response)
-        except Exception as exc:
-            log.error("llm_validation_parse_failed", error=str(exc), raw=llm_response[:2000])
+        parsed = _extract_json_from_llm_response(llm_response)
+        if not parsed:
+            log.error("llm_validation_parse_failed", error="could_not_extract_json", raw=llm_response[:2000])
             return MedicationSafetyResponse(
                 status="unavailable",
                 warnings=[],

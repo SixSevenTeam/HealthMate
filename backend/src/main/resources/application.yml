@@ -66,7 +66,7 @@ aes:
 
 # Python Service
 python:
-  service-url: ${PYTHON_SERVICE_URL:http://localhost:8001}
+  service-url: ${PYTHON_SERVICE_URL:http://localhost:8000}
   internal-api-key: ${PYTHON_INTERNAL_API_KEY:healthmate_internal_api_key}
   request-timeout-ms: 30000
   retry-count: 2

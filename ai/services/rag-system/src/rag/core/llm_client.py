@@ -45,7 +45,7 @@ class LLMClient:
         messages: list[dict],
         system_prompt: str,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 4000,
     ) -> str:
         """Отправляет сообщения в LLM и возвращает текстовый ответ.
 

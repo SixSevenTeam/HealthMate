@@ -2,6 +2,9 @@ package com.healthmate.aigateway.service;
 
 import com.healthmate.aigateway.dto.AiChatRequest;
 import com.healthmate.aigateway.dto.AiChatResponse;
+import com.healthmate.aigateway.dto.AiTipsInvalidateRequest;
+import com.healthmate.aigateway.dto.AiTipsRequest;
+import com.healthmate.aigateway.dto.AiTipsResponse;
 import com.healthmate.aigateway.dto.MedicationSafetyRequest;
 import com.healthmate.aigateway.dto.MedicationSafetyResponse;
 import com.healthmate.exception.AiServiceUnavailableException;
@@ -13,6 +16,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -22,6 +26,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -133,6 +139,81 @@ public class AIGatewayService {
         } catch (Exception e) {
             log.warn("Python /ai/medications/validate call failed", e);
             return MedicationSafetyResponse.unavailable("Safety validation is temporarily unavailable");
+        }
+    }
+
+    public AiTipsResponse generateTips(AiTipsRequest request) {
+        try {
+            String url = pythonServiceUrl + "/ai/tips/generate";
+            String requestJson = objectMapper.writeValueAsString(request);
+
+            log.info("Python /ai/tips/generate request payload: {}", requestJson);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("X-Internal-Key", internalApiKey);
+
+            HttpEntity<AiTipsRequest> entity = new HttpEntity<>(request, headers);
+            ResponseEntity<AiTipsResponse> response = restTemplate.exchange(
+                url,
+                HttpMethod.POST,
+                entity,
+                AiTipsResponse.class
+            );
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                return AiTipsResponse.builder()
+                    .insights(Collections.emptyList())
+                    .recommendations(Collections.emptyList())
+                    .source("unavailable")
+                    .build();
+            }
+
+            return response.getBody();
+        } catch (HttpStatusCodeException e) {
+            log.warn("Python /ai/tips/generate error: status={}, body={}", e.getStatusCode().value(), e.getResponseBodyAsString());
+            return AiTipsResponse.builder()
+                .insights(Collections.emptyList())
+                .recommendations(Collections.emptyList())
+                .source("unavailable")
+                .build();
+        } catch (RestClientException e) {
+            log.warn("Python /ai/tips/generate call failed", e);
+            return AiTipsResponse.builder()
+                .insights(Collections.emptyList())
+                .recommendations(Collections.emptyList())
+                .source("unavailable")
+                .build();
+        } catch (Exception e) {
+            log.warn("Unexpected error while generating AI tips", e);
+            return AiTipsResponse.builder()
+                .insights(Collections.emptyList())
+                .recommendations(Collections.emptyList())
+                .source("unavailable")
+                .build();
+        }
+    }
+
+    public void invalidateTipsCache(UUID userId, String reason) {
+        if (userId == null) {
+            return;
+        }
+        try {
+            String url = pythonServiceUrl + "/ai/tips/invalidate";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("X-Internal-Key", internalApiKey);
+
+            AiTipsInvalidateRequest payload = AiTipsInvalidateRequest.builder()
+                .userId(userId)
+                .reason(reason)
+                .build();
+
+            HttpEntity<AiTipsInvalidateRequest> entity = new HttpEntity<>(payload, headers);
+            restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+        } catch (Exception e) {
+            log.warn("Failed to invalidate AI tips cache for user={} reason={}", userId, reason, e);
         }
     }
 

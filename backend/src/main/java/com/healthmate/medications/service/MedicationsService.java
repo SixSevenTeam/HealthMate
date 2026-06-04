@@ -1,5 +1,6 @@
 package com.healthmate.medications.service;
 
+import com.healthmate.aigateway.service.AIGatewayService;
 import com.healthmate.medications.entity.*;
 import com.healthmate.medications.repository.*;
 import com.healthmate.exception.ResourceNotFoundException;
@@ -43,6 +44,7 @@ public class MedicationsService {
     private final UserMedicationRepository userMedicationRepository;
     private final ScheduleRepository scheduleRepository;
     private final IntakeLogRepository intakeLogRepository;
+    private final AIGatewayService aiGatewayService;
 
     @Value("${healthmate.dataset-root:dataset/healthmate_2018-2023/data}")
     private String datasetRoot;
@@ -50,11 +52,13 @@ public class MedicationsService {
     public MedicationsService(DrugRepository drugRepository, 
                               UserMedicationRepository userMedicationRepository,
                               ScheduleRepository scheduleRepository,
-                              IntakeLogRepository intakeLogRepository) {
+                              IntakeLogRepository intakeLogRepository,
+                              AIGatewayService aiGatewayService) {
         this.drugRepository = drugRepository;
         this.userMedicationRepository = userMedicationRepository;
         this.scheduleRepository = scheduleRepository;
         this.intakeLogRepository = intakeLogRepository;
+        this.aiGatewayService = aiGatewayService;
     }
 
     public List<Drug> searchDrugs(String query) {
@@ -181,6 +185,7 @@ public class MedicationsService {
     public UserMedication addUserMedication(UUID userId, UserMedication medication) {
         medication.setUserId(userId);
         UserMedication saved = userMedicationRepository.save(medication);
+        invalidateTipsCache(userId, "medication_added");
         log.info("User medication added: {}", saved.getId());
         return saved;
     }
@@ -203,6 +208,7 @@ public class MedicationsService {
         }
 
         regenerateFuturePendingLogs(savedMedication.getId());
+        invalidateTipsCache(userId, "medication_created");
         log.info("User medication created with schedules: {}", savedMedication.getId());
         return savedMedication;
     }
@@ -218,6 +224,7 @@ public class MedicationsService {
         schedule.setUserMedicationId(userMedicationId);
         Schedule saved = scheduleRepository.save(schedule);
         regenerateFuturePendingLogs(userMedicationId);
+        invalidateTipsCache(userId, "schedule_added");
         log.info("Schedule added for medication: {}", userMedicationId);
         return saved;
     }
@@ -230,6 +237,7 @@ public class MedicationsService {
         getUserMedication(schedule.getUserMedicationId(), userId);
         scheduleRepository.delete(schedule);
         regenerateFuturePendingLogs(schedule.getUserMedicationId());
+        invalidateTipsCache(userId, "schedule_deleted");
         log.info("Schedule deleted: {}", scheduleId);
     }
 
@@ -290,6 +298,7 @@ public class MedicationsService {
         }
         intakeLog.setConfirmedVia("app");
         IntakeLog updated = intakeLogRepository.save(intakeLog);
+        invalidateTipsCache(userId, "intake_status_" + normalizedStatus);
         log.info("Intake status updated: {} -> {}", logId, normalizedStatus);
         return updated;
     }
@@ -331,6 +340,7 @@ public class MedicationsService {
 
         try {
             IntakeLog updated = intakeLogRepository.save(intakeLog);
+            invalidateTipsCache(userId, "intake_marked_" + normalizedStatus);
             log.info("Intake marked: medication={} schedule={} date={} status={}", userMedicationId, scheduleId, date, normalizedStatus);
             return updated;
         } catch (DataIntegrityViolationException ex) {
@@ -350,6 +360,7 @@ public class MedicationsService {
             existing.setConfirmedVia("app");
 
             IntakeLog updated = intakeLogRepository.save(existing);
+            invalidateTipsCache(userId, "intake_marked_" + normalizedStatus);
             log.warn(
                 "Intake mark conflict resolved by retry: medication={} schedule={} date={} status={}",
                 userMedicationId,
@@ -374,6 +385,7 @@ public class MedicationsService {
             "pending",
             Instant.now()
         );
+        invalidateTipsCache(userId, "medication_deactivated");
         log.info("Medication deactivated and future pending logs removed: {}", id);
     }
 
@@ -394,7 +406,12 @@ public class MedicationsService {
                 Instant.now()
             );
         }
+        invalidateTipsCache(userId, "medication_active_changed");
         return saved;
+    }
+
+    private void invalidateTipsCache(UUID userId, String reason) {
+        aiGatewayService.invalidateTipsCache(userId, reason);
     }
 
     public String resolveTradeName(UserMedication medication) {

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { getProfile } from "@/entities/profile/api/profileApi";
+import { getDashboardSummary } from "@/entities/dashboard/api/dashboardApi";
 import {
   getMedications,
   getSchedules,
@@ -15,6 +16,7 @@ import Icon from "@/shared/components/Icon.vue";
 const profile = ref(null);
 const meds = ref([]);
 const intakeStore = ref({ marks: {}, history: [] });
+const recommendations = ref([]);
 const loading = ref(true);
 const errorMessage = ref("");
 const weekdayLabels = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -31,6 +33,12 @@ const monthNames = [
   "Октября",
   "Ноября",
   "Декабря",
+];
+
+const defaultRecommendations = [
+  "Регулярно принимайте лекарства в назначенное время",
+  "Пейте достаточно воды и старайтесь хорошо высыпаться",
+  "Обновляйте медицинский профиль при изменениях",
 ];
 
 function getTodayKey(date = new Date()) {
@@ -129,14 +137,36 @@ const bmiStatus = computed(() => {
 onMounted(async () => {
   loading.value = true;
   errorMessage.value = "";
+  recommendations.value = defaultRecommendations;
 
   try {
-    const [profileData, medsData] = await Promise.all([
+    const [profileData, medsData, dashboardSummary] = await Promise.all([
       getProfile(),
       getMedications(0, 20),
+      getDashboardSummary().catch(() => null),
     ]);
 
     profile.value = profileData;
+
+    console.log("Dashboard summary received:", dashboardSummary);
+    console.log(
+      "Recommendations from dashboard:",
+      dashboardSummary?.recommendations,
+    );
+
+    if (dashboardSummary?.recommendations?.length) {
+      console.log(
+        "Setting recommendations from dashboard:",
+        dashboardSummary.recommendations,
+      );
+      recommendations.value = dashboardSummary.recommendations;
+    } else if (dashboardSummary) {
+      console.warn(
+        "Dashboard summary has no recommendations field",
+        dashboardSummary,
+      );
+    }
+
     const active = uniqueById(medsData?.active || []);
     meds.value = active;
 
@@ -575,17 +605,19 @@ function buildMedicationCalendar(med) {
 
     <article class="card">
       <h2 class="card-title">Рекомендации</h2>
-      <ul class="list">
-        <li class="list-item">
-          <span>✓ Регулярно принимайте лекарства в назначенное время</span>
-        </li>
-        <li class="list-item">
-          <span>✓ Обновляйте свой медицинский профиль</span>
-        </li>
-        <li class="list-item">
-          <span>✓ Проконсультируйтесь с AI при необходимости</span>
+      <ul
+        v-if="Array.isArray(recommendations) && recommendations.length"
+        class="list"
+      >
+        <li
+          v-for="(item, idx) in recommendations"
+          :key="`rec-${idx}`"
+          class="list-item"
+        >
+          <span>✓ {{ String(item).trim() }}</span>
         </li>
       </ul>
+      <p v-else class="muted">Нет рекомендаций</p>
     </article>
 
     <article class="card full-width-card">
