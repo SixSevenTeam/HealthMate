@@ -220,24 +220,33 @@ function buildDashboardSummary(from, to) {
     return { date: dateKey, taken, waiting, missed, totalScheduled };
   });
 
-  return {
-    period: { from, to },
-    dailySeries,
-    adherence: meds.map((med) => {
-      const scheduledOccurrences = [];
-      for (const date of rangeDates) {
-        for (const schedule of med.schedules || []) {
-          if (matchesScheduleDay(date, schedule.daysOfWeek || [])) {
-            scheduledOccurrences.push({
-              date: formatDateKey(date),
-              scheduleId: schedule.id,
-              timeOfDay: schedule.timeOfDay || "00:00:00",
-            });
-          }
+  const adherence = meds.map((med) => {
+    const scheduledOccurrences = [];
+    for (const date of rangeDates) {
+      for (const schedule of med.schedules || []) {
+        if (matchesScheduleDay(date, schedule.daysOfWeek || [])) {
+          scheduledOccurrences.push({
+            date: formatDateKey(date),
+            scheduleId: schedule.id,
+            timeOfDay: schedule.timeOfDay || "00:00:00",
+          });
         }
       }
+    }
 
-      const medHistory = store.history.filter((item) => {
+    const medHistory = store.history.filter((item) => {
+      if (item.medId !== med.id) return false;
+      const itemDate = parseIsoDate(item.date);
+      if (!itemDate || !start || !end) return false;
+      itemDate.setHours(0, 0, 0, 0);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(0, 0, 0, 0);
+      return itemDate >= start && itemDate <= end;
+    });
+
+    const markHistory = Object.entries(store.marks || {})
+      .map(([key, status]) => ({ ...parseMarkKey(key), status }))
+      .filter((item) => {
         if (item.medId !== med.id) return false;
         const itemDate = parseIsoDate(item.date);
         if (!itemDate || !start || !end) return false;
@@ -247,53 +256,78 @@ function buildDashboardSummary(from, to) {
         return itemDate >= start && itemDate <= end;
       });
 
-      const markHistory = Object.entries(store.marks || {})
-        .map(([key, status]) => ({ ...parseMarkKey(key), status }))
-        .filter((item) => {
-          if (item.medId !== med.id) return false;
-          const itemDate = parseIsoDate(item.date);
-          if (!itemDate || !start || !end) return false;
-          itemDate.setHours(0, 0, 0, 0);
-          start.setHours(0, 0, 0, 0);
-          end.setHours(0, 0, 0, 0);
-          return itemDate >= start && itemDate <= end;
-        });
+    const totalScheduled = scheduledOccurrences.length;
+    const totalTaken =
+      medHistory.filter((item) => item.status === "taken").length +
+      markHistory.filter((item) => item.status === "taken").length;
+    const missedDates = [
+      ...medHistory
+        .filter((item) => item.status === "missed" || item.status === "skipped")
+        .map(
+          (item) =>
+            `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
+        ),
+      ...markHistory
+        .filter((item) => item.status === "missed" || item.status === "skipped")
+        .map(
+          (item) =>
+            `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
+        ),
+    ];
 
-      const totalScheduled = scheduledOccurrences.length;
-      const totalTaken =
-        medHistory.filter((item) => item.status === "taken").length +
-        markHistory.filter((item) => item.status === "taken").length;
-      const missedDates = [
-        ...medHistory
-          .filter(
-            (item) => item.status === "missed" || item.status === "skipped",
-          )
-          .map(
-            (item) =>
-              `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
-          ),
-        ...markHistory
-          .filter(
-            (item) => item.status === "missed" || item.status === "skipped",
-          )
-          .map(
-            (item) =>
-              `${item.date}${item.timeOfDay ? ` ${String(item.timeOfDay).slice(0, 5)}` : ""}`,
-          ),
-      ];
+    return {
+      medicationId: med.id,
+      tradeName: med.tradeName || med.customName || "Medication",
+      totalScheduled,
+      totalTaken,
+      adherencePercent:
+        totalScheduled > 0
+          ? Number(((totalTaken / totalScheduled) * 100).toFixed(2))
+          : 0,
+      missedDates,
+    };
+  });
 
-      return {
-        medicationId: med.id,
-        tradeName: med.tradeName || med.customName || "Medication",
-        totalScheduled,
-        totalTaken,
-        adherencePercent:
-          totalScheduled > 0
-            ? Number(((totalTaken / totalScheduled) * 100).toFixed(2))
-            : 0,
-        missedDates,
-      };
-    }),
+  const totalScheduled = adherence.reduce(
+    (sum, item) => sum + (item.totalScheduled || 0),
+    0,
+  );
+  const totalTaken = adherence.reduce(
+    (sum, item) => sum + (item.totalTaken || 0),
+    0,
+  );
+  const overall =
+    totalScheduled > 0
+      ? Number(((totalTaken / totalScheduled) * 100).toFixed(2))
+      : 0;
+  const missedMeds = adherence.filter(
+    (item) => (item.missedDates || []).length > 0,
+  ).length;
+
+  const insights = [
+    `За период принято ${totalTaken} из ${totalScheduled} назначений (${overall}%).`,
+    overall >= 80
+      ? "Хороший темп приема, продолжайте в том же режиме."
+      : "Есть пропуски, попробуйте усилить напоминания о приеме.",
+  ];
+  if (missedMeds > 0) {
+    insights.push(`Пропуски есть по ${missedMeds} препарат(у/ам).`);
+  }
+
+  const recommendations = [
+    overall >= 80
+      ? "Продолжайте принимать лекарства в одно и то же время каждый день."
+      : "Привяжите прием к ежедневной привычке, например к завтраку или ужину.",
+    "Пейте достаточно воды в течение дня и старайтесь высыпаться.",
+    "Проверяйте календарь приема, чтобы не пропускать ближайшие дозы.",
+  ];
+
+  return {
+    period: { from, to },
+    dailySeries,
+    adherence,
+    insights,
+    recommendations,
   };
 }
 
@@ -391,15 +425,26 @@ async function mockRequest(path, options = {}) {
 
   if (path === "/api/medications/validate" && method === "POST") {
     const warnings = [];
+    const blockers = [];
+    const doseAmount = body.doseAmount || 0;
+    
+    // Check for dangerous doses
+    if (doseAmount > 1000) {
+      blockers.push(
+        `Доза ${doseAmount} единиц многократно превышает безопасный диапазон. Требуется уточнение дозировки.`
+      );
+    }
+    
     if ((body.customName || "").toLowerCase().includes("ибупрофен")) {
       warnings.push(
         "Проверьте совместимость с гастропротекцией при длительном приеме.",
       );
     }
+    
     return {
-      status: warnings.length > 0 ? "warning" : "ok",
+      status: blockers.length > 0 ? "danger" : (warnings.length > 0 ? "warning" : "ok"),
       warnings,
-      blockers: [],
+      blockers,
       metadata: {},
     };
   }

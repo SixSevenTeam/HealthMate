@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from rag.api.endpoints import chat, documents, medications, query
+from rag.api.endpoints import chat, documents, medications, query, tips
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -20,7 +20,6 @@ api_router.include_router(
     tags=["Документы"],
 )
 
-# /ai/chat + /ai/medications/validate — endpoints для Java-бэкенда (без /api/v1 префикса)
 chat_router = APIRouter()
 chat_router.include_router(
     chat.router,
@@ -28,5 +27,9 @@ chat_router.include_router(
 )
 chat_router.include_router(
     medications.router,
+    tags=["Java Integration"],
+)
+chat_router.include_router(
+    tips.router,
     tags=["Java Integration"],
 )

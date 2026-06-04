@@ -1,5 +1,8 @@
 package com.healthmate.dashboard.service;
 
+import com.healthmate.aigateway.dto.AiTipsRequest;
+import com.healthmate.aigateway.dto.AiTipsResponse;
+import com.healthmate.aigateway.service.AIGatewayService;
 import com.healthmate.medications.entity.Drug;
 import com.healthmate.medications.entity.IntakeLog;
 import com.healthmate.medications.entity.Schedule;
@@ -8,6 +11,10 @@ import com.healthmate.medications.repository.DrugRepository;
 import com.healthmate.medications.repository.IntakeLogRepository;
 import com.healthmate.medications.repository.ScheduleRepository;
 import com.healthmate.medications.repository.UserMedicationRepository;
+import com.healthmate.medications.service.MedicationsService;
+import com.healthmate.profile.service.ProfileService;
+import com.healthmate.profile.service.UserContextDTO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +31,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 public class DashboardService {
 
@@ -31,17 +39,26 @@ public class DashboardService {
     private final UserMedicationRepository userMedicationRepository;
     private final ScheduleRepository scheduleRepository;
     private final DrugRepository drugRepository;
+    private final ProfileService profileService;
+    private final MedicationsService medicationsService;
+    private final AIGatewayService aiGatewayService;
 
     public DashboardService(
         IntakeLogRepository intakeLogRepository,
         UserMedicationRepository userMedicationRepository,
         ScheduleRepository scheduleRepository,
-        DrugRepository drugRepository
+        DrugRepository drugRepository,
+        ProfileService profileService,
+        MedicationsService medicationsService,
+        AIGatewayService aiGatewayService
     ) {
         this.intakeLogRepository = intakeLogRepository;
         this.userMedicationRepository = userMedicationRepository;
         this.scheduleRepository = scheduleRepository;
         this.drugRepository = drugRepository;
+        this.profileService = profileService;
+        this.medicationsService = medicationsService;
+        this.aiGatewayService = aiGatewayService;
     }
 
     public DashboardSummaryResponse getSummary(UUID userId, LocalDate from, LocalDate to, String scope) {
@@ -65,11 +82,13 @@ public class DashboardService {
             .toList();
 
         if (userMedications.isEmpty()) {
+            List<String> fallbackRecommendations = defaultGeneralRecommendations();
             return DashboardSummaryResponse.builder()
                 .period(new DashboardSummaryResponse.PeriodDTO(from, to))
                 .adherence(List.of())
                 .dailySeries(buildEmptyDailySeries(from, to))
-                .insights(List.of("No medications for selected filter."))
+                .insights(List.of("Для выбранного фильтра пока нет лекарств в отчете."))
+                .recommendations(fallbackRecommendations)
                 .build();
         }
 
@@ -94,7 +113,7 @@ public class DashboardService {
         );
 
         if (!hasAnySchedule && !logs.isEmpty()) {
-            return buildSummaryFromLogsOnly(userMedications, logs, from, to, now, zone);
+            return buildSummaryFromLogsOnly(userId, userMedications, logs, from, to, normalizedScope, now, zone);
         }
 
         Map<UUID, Map<Instant, IntakeLog>> logsByMedicationAndInstant = logs.stream()
@@ -204,13 +223,14 @@ public class DashboardService {
 
         adherence.sort(Comparator.comparing(DashboardSummaryResponse.AdherenceDTO::getTradeName, String.CASE_INSENSITIVE_ORDER));
 
-        List<String> insights = buildInsights(adherence);
+        TipsBundle tipsBundle = buildTips(userId, from, to, normalizedScope, adherence);
 
         return DashboardSummaryResponse.builder()
             .period(new DashboardSummaryResponse.PeriodDTO(from, to))
             .adherence(adherence)
             .dailySeries(dailySeries)
-            .insights(insights)
+            .insights(tipsBundle.insights)
+            .recommendations(tipsBundle.recommendations)
             .build();
     }
 
@@ -267,10 +287,12 @@ public class DashboardService {
     }
 
     private DashboardSummaryResponse buildSummaryFromLogsOnly(
+        UUID userId,
         List<UserMedication> userMedications,
         List<IntakeLog> logs,
         LocalDate from,
         LocalDate to,
+        String scope,
         Instant now,
         ZoneId zone
     ) {
@@ -354,11 +376,14 @@ public class DashboardService {
 
         adherence.sort(Comparator.comparing(DashboardSummaryResponse.AdherenceDTO::getTradeName, String.CASE_INSENSITIVE_ORDER));
 
+        TipsBundle tipsBundle = buildTips(userId, from, to, scope, adherence);
+
         return DashboardSummaryResponse.builder()
             .period(new DashboardSummaryResponse.PeriodDTO(from, to))
             .adherence(adherence)
             .dailySeries(dailySeries)
-            .insights(buildInsights(adherence))
+            .insights(tipsBundle.insights)
+            .recommendations(tipsBundle.recommendations)
             .build();
     }
 
@@ -380,9 +405,70 @@ public class DashboardService {
         return "Medication " + medication.getId().toString().substring(0, 8);
     }
 
-    private List<String> buildInsights(List<DashboardSummaryResponse.AdherenceDTO> adherence) {
+    private TipsBundle buildTips(
+        UUID userId,
+        LocalDate from,
+        LocalDate to,
+        String scope,
+        List<DashboardSummaryResponse.AdherenceDTO> adherence
+    ) {
+        List<String> fallbackInsights = buildRuleBasedInsights(adherence);
+        List<String> fallbackRecommendations = buildRuleBasedRecommendations(adherence);
+
+        try {
+            log.info("dashboard_tips_generation_started userId={} scope={} period={}-{}", userId, scope, from, to);
+            UserContextDTO userContext = profileService.getUserContext(userId);
+            userContext.setActiveMedications(medicationsService.getActiveMedicationsForContext(userId));
+
+            int totalScheduled = adherence.stream().mapToInt(DashboardSummaryResponse.AdherenceDTO::getTotalScheduled).sum();
+            int totalTaken = adherence.stream().mapToInt(DashboardSummaryResponse.AdherenceDTO::getTotalTaken).sum();
+            double overall = totalScheduled == 0 ? 0.0 : round2(totalTaken * 100.0 / totalScheduled);
+
+            List<AiTipsRequest.AdherenceItem> adherenceItems = adherence.stream()
+                .map(item -> AiTipsRequest.AdherenceItem.builder()
+                    .tradeName(item.getTradeName())
+                    .totalScheduled(item.getTotalScheduled())
+                    .totalTaken(item.getTotalTaken())
+                    .adherencePercent(item.getAdherencePercent())
+                    .missedDates(item.getMissedDates())
+                    .build())
+                .toList();
+
+            AiTipsRequest request = AiTipsRequest.builder()
+                .userId(userId)
+                .from(from)
+                .to(to)
+                .scope(scope)
+                .userContext(userContext)
+                .overallAdherence(overall)
+                .totalScheduled(totalScheduled)
+                .totalTaken(totalTaken)
+                .adherence(adherenceItems)
+                .build();
+
+            AiTipsResponse aiTipsResponse = aiGatewayService.generateTips(request);
+            log.info("dashboard_tips_generation_result userId={} source={} insights={} recommendations={}", userId, aiTipsResponse.getSource(), aiTipsResponse.safeInsights().size(), aiTipsResponse.safeRecommendations().size());
+
+            List<String> insights = aiTipsResponse.safeInsights();
+            List<String> recommendations = aiTipsResponse.safeRecommendations();
+
+            if (insights.isEmpty()) {
+                insights = fallbackInsights;
+            }
+            if (recommendations.isEmpty()) {
+                recommendations = fallbackRecommendations;
+            }
+
+            return new TipsBundle(insights, recommendations);
+        } catch (Exception ex) {
+            log.warn("dashboard_tips_generation_fallback userId={} reason={}", userId, ex.getMessage(), ex);
+            return new TipsBundle(fallbackInsights, fallbackRecommendations);
+        }
+    }
+
+    private List<String> buildRuleBasedInsights(List<DashboardSummaryResponse.AdherenceDTO> adherence) {
         if (adherence.isEmpty()) {
-            return List.of("No adherence data for selected period.");
+            return List.of("За выбранный период пока нет данных о приеме.");
         }
 
         int totalScheduled = adherence.stream().mapToInt(DashboardSummaryResponse.AdherenceDTO::getTotalScheduled).sum();
@@ -390,35 +476,72 @@ public class DashboardService {
         double overall = totalScheduled == 0 ? 0.0 : round2(totalTaken * 100.0 / totalScheduled);
 
         List<String> insights = new ArrayList<>();
-        insights.add("Overall adherence: " + overall + "%");
+        insights.add("За период принято " + totalTaken + " из " + totalScheduled + " назначений (" + overall + "%).");
 
         if (overall >= 90) {
-            insights.add("Adherence is excellent in the selected period.");
+            insights.add("Отличный результат: вы соблюдаете схему приема почти без сбоев.");
         } else if (overall >= 75) {
-            insights.add("Adherence is good, but there is room for improvement.");
+            insights.add("Хорошо, но есть несколько пропусков. Лучше закрепить режим.");
         } else if (overall >= 50) {
-            insights.add("Adherence is moderate. Consider reminders for missed intakes.");
+            insights.add("Принято примерно половина доз. Попробуйте напоминания и фиксированное время приема.");
         } else {
-            insights.add("Adherence is low. A stricter routine may be needed.");
+            insights.add("Пропусков много. Стоит пересобрать режим, чтобы не пропускать приемы.");
         }
 
         long lowAdherenceCount = adherence.stream()
             .filter(item -> item.getAdherencePercent() < 80.0)
             .count();
         if (lowAdherenceCount == 0) {
-            insights.add("All medications are within the 80% adherence target.");
+            insights.add("Все лекарства держатся выше целевого уровня 80%.");
         } else {
-            insights.add(lowAdherenceCount + " medication(s) are below the 80% adherence target.");
+            insights.add("Ниже цели 80% сейчас " + lowAdherenceCount + " препарат(а). Их важно подтянуть в первую очередь.");
         }
 
         long medicationsWithMissed = adherence.stream()
             .filter(item -> !item.getMissedDates().isEmpty())
             .count();
         if (medicationsWithMissed > 0) {
-            insights.add(medicationsWithMissed + " medication(s) have missed intake dates.");
+            insights.add("Есть пропуски по " + medicationsWithMissed + " препарат(у/ам). Проверьте ближайшие даты в календаре приема.");
         }
 
         return insights;
+    }
+
+    private List<String> buildRuleBasedRecommendations(List<DashboardSummaryResponse.AdherenceDTO> adherence) {
+        if (adherence.isEmpty()) {
+            return defaultGeneralRecommendations();
+        }
+
+        int totalScheduled = adherence.stream().mapToInt(DashboardSummaryResponse.AdherenceDTO::getTotalScheduled).sum();
+        int totalTaken = adherence.stream().mapToInt(DashboardSummaryResponse.AdherenceDTO::getTotalTaken).sum();
+        double overall = totalScheduled == 0 ? 0.0 : round2(totalTaken * 100.0 / totalScheduled);
+
+        List<String> recommendations = new ArrayList<>();
+        if (overall < 80) {
+            recommendations.add("Привяжите прием лекарств к стабильной ежедневной привычке, например к завтраку или ужину.");
+            recommendations.add("Если пропускаете дозы, включите 1-2 напоминания с интервалом 15-30 минут.");
+        } else {
+            recommendations.add("Продолжайте принимать лекарства в то же время каждый день, это поддерживает стабильный эффект.");
+        }
+
+        boolean hasMissed = adherence.stream().anyMatch(item -> !item.getMissedDates().isEmpty());
+        if (hasMissed) {
+            recommendations.add("Проверьте пропущенные даты в календаре и запланируйте ближайший прием по назначению врача.");
+        }
+
+        if (recommendations.size() < 3) {
+            recommendations.add("Пейте достаточно воды в течение дня и старайтесь хорошо высыпаться.");
+        }
+
+        return recommendations.stream().limit(3).toList();
+    }
+
+    private List<String> defaultGeneralRecommendations() {
+        return List.of(
+            "Пейте достаточно воды в течение дня.",
+            "Старайтесь ложиться спать и просыпаться в одно и то же время.",
+            "Принимайте лекарства строго по схеме, которую назначил врач."
+        );
     }
 
     private double round2(double value) {
@@ -436,5 +559,15 @@ public class DashboardService {
         private int waiting;
         private int missed;
         private int totalScheduled;
+    }
+
+    private static class TipsBundle {
+        private final List<String> insights;
+        private final List<String> recommendations;
+
+        private TipsBundle(List<String> insights, List<String> recommendations) {
+            this.insights = insights;
+            this.recommendations = recommendations;
+        }
     }
 }

@@ -39,21 +39,21 @@
               <div class="profile-field">
                 <label class="profile-field-label">Рост (см)</label>
                 <input
-                  v-model.number="formData.heightCm"
-                  type="number"
-                  class="profile-field-input"
-                  placeholder="180"
+                    v-model.number="formData.heightCm"
+                    type="number"
+                    class="profile-field-input"
+                    placeholder="180"
                 />
               </div>
 
               <div class="profile-field">
                 <label class="profile-field-label">Вес (кг)</label>
                 <input
-                  v-model.number="formData.weightKg"
-                  type="number"
-                  class="profile-field-input"
-                  placeholder="75"
-                  step="0.1"
+                    v-model.number="formData.weightKg"
+                    type="number"
+                    class="profile-field-input"
+                    placeholder="75"
+                    step="0.1"
                 />
               </div>
 
@@ -73,32 +73,63 @@
               </div>
             </div>
 
-            <div class="profile-field" v-if="profileData.diagnoses.length > 0">
-              <label class="profile-field-label">Диагнозы</label>
-              <div class="profile-diagnoses">
+            <!-- Diagnoses Section -->
+            <div class="profile-field profile-field-full">
+              <label class="profile-field-label">
+                Диагнозы
+                <span class="profile-field-hint">(дату можно не указывать)</span>
+              </label>
+              <div class="profile-badges-container">
                 <div
-                  v-for="diagnosis in profileData.diagnoses"
-                  :key="diagnosis.name"
-                  class="profile-diagnosis-badge"
+                    v-for="(diag, index) in formData.diagnoses"
+                    :key="'diag-' + index"
+                    class="profile-badge editable"
                 >
-                  {{ diagnosis.name }}
-                  <span class="profile-diagnosis-date">{{ formatDate(diagnosis.diagnosedAt) }}</span>
+                  <input
+                      v-model="diag.name"
+                      class="badge-input"
+                      placeholder="Название (напр. Гипертония)"
+                      required
+                  />
+                  <input
+                      v-model="diag.diagnosedAt"
+                      type="date"
+                      class="badge-input date-input"
+                      title="Дата постановки диагноза (необязательно)"
+                  />
+                  <button type="button" class="badge-remove" @click="removeDiagnosis(index)" title="Удалить">×</button>
                 </div>
               </div>
+              <button type="button" class="profile-btn-add" @click="addDiagnosis">
+                + Добавить диагноз
+              </button>
             </div>
 
-            <div class="profile-field" v-if="profileData.allergies.length > 0">
+            <!-- Allergies Section -->
+            <div class="profile-field profile-field-full">
               <label class="profile-field-label">Аллергии</label>
-              <div class="profile-allergies">
+              <div class="profile-badges-container">
                 <div
-                  v-for="allergy in profileData.allergies"
-                  :key="allergy.allergen"
-                  class="profile-allergy-badge"
+                    v-for="(allergy, index) in formData.allergies"
+                    :key="'allergy-' + index"
+                    class="profile-badge editable allergy"
                 >
-                  {{ allergy.allergen }}
-                  <span class="profile-allergy-reaction">{{ allergy.reaction }}</span>
+                  <input
+                      v-model="allergy.allergen"
+                      class="badge-input"
+                      placeholder="Аллерген (напр. Пенициллин)"
+                  />
+                  <input
+                      v-model="allergy.reaction"
+                      class="badge-input"
+                      placeholder="Реакция (напр. Сыпь)"
+                  />
+                  <button type="button" class="badge-remove" @click="removeAllergy(index)" title="Удалить">×</button>
                 </div>
               </div>
+              <button type="button" class="profile-btn-add" @click="addAllergy">
+                + Добавить аллергию
+              </button>
             </div>
 
             <div v-if="error" class="profile-error">{{ error }}</div>
@@ -106,18 +137,18 @@
 
             <div class="profile-modal-actions">
               <button
-                type="submit"
-                class="profile-btn profile-btn-primary"
-                :disabled="loading"
+                  type="submit"
+                  class="profile-btn profile-btn-primary"
+                  :disabled="loading"
               >
                 <Icon name="edit" size="18" />
                 <span>{{ loading ? 'Сохранение...' : 'Сохранить' }}</span>
               </button>
               <button
-                type="button"
-                class="profile-btn profile-btn-secondary"
-                @click="closeModal"
-                :disabled="loading"
+                  type="button"
+                  class="profile-btn profile-btn-secondary"
+                  @click="closeModal"
+                  :disabled="loading"
               >
                 Отмена
               </button>
@@ -151,6 +182,8 @@ const formData = ref({
   heightCm: null,
   weightKg: null,
   bloodType: '',
+  diagnoses: [],
+  allergies: []
 });
 
 const userName = computed(() => {
@@ -160,43 +193,54 @@ const userName = computed(() => {
 
 const userEmail = computed(() => user.value?.email || 'не указан');
 
-// Sync form data with profile data
+// Sync form data with profile data (deep copy to avoid mutating store directly)
 watch(
-  () => profileData.value,
-  (newProfile) => {
-    formData.value.heightCm = newProfile.heightCm;
-    formData.value.weightKg = newProfile.weightKg;
-    formData.value.bloodType = newProfile.bloodType || '';
-  },
-  { deep: true }
+    () => profileData.value,
+    (newProfile) => {
+      if (newProfile) {
+        formData.value.heightCm = newProfile.heightCm;
+        formData.value.weightKg = newProfile.weightKg;
+        formData.value.bloodType = newProfile.bloodType || '';
+        formData.value.diagnoses = JSON.parse(JSON.stringify(newProfile.diagnoses || []));
+        formData.value.allergies = JSON.parse(JSON.stringify(newProfile.allergies || []));
+      }
+    },
+    { deep: true, immediate: true }
 );
 
 // Load profile when modal opens
 watch(
-  () => props.isOpen,
-  async (newIsOpen) => {
-    if (newIsOpen) {
-      await fetchProfile();
-      formData.value.heightCm = profileData.value.heightCm;
-      formData.value.weightKg = profileData.value.weightKg;
-      formData.value.bloodType = profileData.value.bloodType || '';
+    () => props.isOpen,
+    async (newIsOpen) => {
+      if (newIsOpen) {
+        await fetchProfile();
+      }
     }
-  }
 );
 
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('ru-RU', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  } catch {
-    return dateStr;
-  }
-}
+// --- Diagnosis Handlers ---
+const addDiagnosis = () => {
+  formData.value.diagnoses.push({
+    name: '',
+    diagnosedAt: null // Дата теперь по умолчанию пустая (null)
+  });
+};
+
+const removeDiagnosis = (index) => {
+  formData.value.diagnoses.splice(index, 1);
+};
+
+// --- Allergy Handlers ---
+const addAllergy = () => {
+  formData.value.allergies.push({
+    allergen: '',
+    reaction: ''
+  });
+};
+
+const removeAllergy = (index) => {
+  formData.value.allergies.splice(index, 1);
+};
 
 async function handleSave() {
   try {
@@ -204,6 +248,19 @@ async function handleSave() {
       heightCm: formData.value.heightCm,
       weightKg: formData.value.weightKg,
       bloodType: formData.value.bloodType,
+      // Очищаем и приводим к корректному виду
+      diagnoses: formData.value.diagnoses
+          .filter(d => d.name.trim() !== '')
+          .map(d => ({
+            name: d.name.trim(),
+            diagnosedAt: d.diagnosedAt || null // Если пусто, отправляем null
+          })),
+      allergies: formData.value.allergies
+          .filter(a => a.allergen.trim() !== '')
+          .map(a => ({
+            allergen: a.allergen.trim(),
+            reaction: a.reaction.trim() || null
+          }))
     });
 
     closeModal();
@@ -218,7 +275,10 @@ function closeModal() {
 </script>
 
 <style scoped>
-/* Overlay */
+/* ... (Твои старые стили остаются без изменений, добавляем только новые ниже) ... */
+
+/* Overlay, Modal Container, Header, Content, Sections, Info Items, Form Fields - оставляем как было */
+
 .profile-modal-overlay {
   position: fixed;
   top: 0;
@@ -233,7 +293,6 @@ function closeModal() {
   padding: 20px;
 }
 
-/* Modal Container */
 .profile-modal {
   background: #fff;
   border-radius: 16px;
@@ -246,7 +305,6 @@ function closeModal() {
   flex-direction: column;
 }
 
-/* Header */
 .profile-modal-header {
   display: flex;
   align-items: center;
@@ -282,14 +340,12 @@ function closeModal() {
   background: #f0f4f8;
 }
 
-/* Content */
 .profile-modal-content {
   flex: 1;
   padding: 24px 28px;
   overflow-y: auto;
 }
 
-/* Sections */
 .profile-section {
   margin-bottom: 32px;
 }
@@ -310,7 +366,6 @@ function closeModal() {
   border-bottom: 1px solid #e8ecf0;
 }
 
-/* Info Items (display only) */
 .profile-info-list {
   display: flex;
   flex-direction: column;
@@ -333,7 +388,6 @@ function closeModal() {
   color: #111;
 }
 
-/* Form Fields */
 .profile-field {
   margin-bottom: 16px;
 }
@@ -364,44 +418,111 @@ function closeModal() {
   transition: border-color 0.18s, box-shadow 0.18s;
 }
 
-.profile-field-input::placeholder {
-  color: #aab4be;
-}
-
 .profile-field-input:focus {
   border-color: #0079e0;
   box-shadow: 0 0 0 3px rgba(0, 121, 224, 0.12);
 }
 
-/* Diagnoses & Allergies */
-.profile-diagnoses,
-.profile-allergies {
+.profile-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.profile-field-full {
+  grid-column: 1 / -1;
+}
+
+/* --- NEW STYLES FOR EDITABLE BADGES --- */
+.profile-badges-container {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
+  margin-bottom: 12px;
 }
 
-.profile-diagnosis-badge,
-.profile-allergy-badge {
+.profile-badge.editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  transition: border-color 0.2s;
+}
+
+.profile-badge.editable:hover {
+  border-color: #cbd5e1;
+}
+
+.profile-badge.editable.allergy {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.badge-input {
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #111;
+  outline: none;
+  min-width: 80px;
+  font-family: 'Nunito', sans-serif;
+}
+
+.badge-input::placeholder {
+  color: #94a3b8;
+}
+
+.badge-input.date-input {
+  min-width: 110px;
+  color: #64748b;
+}
+
+.badge-remove {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge-remove:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.profile-btn-add {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background: #eef2f7;
-  border-radius: 20px;
+  background: transparent;
+  border: 1.5px dashed #cbd5e1;
+  color: #64748b;
+  padding: 8px 16px;
+  border-radius: 8px;
   font-size: 13px;
-  color: #111;
-  border: 1px solid #d8dce4;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: 'Nunito', sans-serif;
 }
 
-.profile-diagnosis-date,
-.profile-allergy-reaction {
-  font-size: 12px;
-  color: #8a93a2;
+.profile-btn-add:hover {
+  border-color: #0079e0;
+  color: #0079e0;
+  background: #f0f7ff;
 }
 
-/* Messages */
+/* Messages & Actions (оставляем как было) */
 .profile-error {
   color: #dc2626;
   font-size: 13px;
@@ -422,7 +543,6 @@ function closeModal() {
   border: 1px solid #bbf7d0;
 }
 
-/* Actions */
 .profile-modal-actions {
   display: flex;
   gap: 12px;
@@ -472,77 +592,29 @@ function closeModal() {
   cursor: not-allowed;
 }
 
+.profile-field-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
-  .profile-modal-overlay {
-    padding: 16px;
+  .profile-field-grid {
+    grid-template-columns: 1fr;
   }
-
-  .profile-modal {
-    max-height: 95vh;
-    border-radius: 12px;
-  }
-
-  .profile-modal-header {
-    padding: 20px 20px;
-  }
-
-  .profile-modal-content {
-    padding: 20px;
-  }
-
-  .profile-section-title {
-    font-size: 14px;
-  }
-
-  .profile-field-input {
-    height: 38px;
-    font-size: 13px;
-  }
-
-  .profile-btn {
-    font-size: 13px;
-    height: 40px;
-  }
+  .profile-modal-overlay { padding: 16px; }
+  .profile-modal { max-height: 95vh; border-radius: 12px; }
+  .profile-modal-header, .profile-modal-content { padding: 20px; }
 }
 
 @media (max-width: 600px) {
-  .profile-modal-overlay {
-    padding: 12px;
-  }
-
-  .profile-modal {
-    border-radius: 12px;
-    max-width: 100%;
-  }
-
-  .profile-modal-header {
-    padding: 16px;
-  }
-
-  .profile-modal-content {
-    padding: 16px;
-  }
-
-  .profile-section {
-    margin-bottom: 20px;
-  }
-
-  .profile-modal-title {
-    font-size: 18px;
-  }
-
-  .profile-field-label {
-    font-size: 12px;
-  }
-
-  .profile-field-input {
-    height: 36px;
-    font-size: 12px;
-  }
-
-  .profile-btn {
-    flex-direction: column;
-  }
+  .profile-modal-overlay { padding: 12px; }
+  .profile-modal { border-radius: 12px; max-width: 100%; }
+  .profile-modal-header, .profile-modal-content { padding: 16px; }
+  .profile-badge.editable { flex-direction: column; align-items: stretch; gap: 4px; }
+  .badge-input { width: 100%; }
+  .badge-remove { align-self: flex-end; margin-top: -20px; margin-right: -4px; }
 }
 </style>

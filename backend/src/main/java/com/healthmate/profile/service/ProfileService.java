@@ -1,5 +1,6 @@
 package com.healthmate.profile.service;
 
+import com.healthmate.aigateway.service.AIGatewayService;
 import com.healthmate.common.encryption.EncryptionService;
 import com.healthmate.profile.dto.AllergyDTO;
 import com.healthmate.profile.dto.DiagnosisDTO;
@@ -26,11 +27,13 @@ public class ProfileService {
 
     private final MedicalProfileRepository profileRepository;
     private final EncryptionService encryptionService;
+    private final AIGatewayService aiGatewayService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public ProfileService(MedicalProfileRepository profileRepository, EncryptionService encryptionService) {
+    public ProfileService(MedicalProfileRepository profileRepository, EncryptionService encryptionService, AIGatewayService aiGatewayService) {
         this.profileRepository = profileRepository;
         this.encryptionService = encryptionService;
+        this.aiGatewayService = aiGatewayService;
     }
 
     public MedicalProfileResponse getProfile(UUID userId) {
@@ -63,6 +66,7 @@ public class ProfileService {
         }
 
         MedicalProfile saved = profileRepository.save(profile);
+        aiGatewayService.invalidateTipsCache(userId, "profile_updated");
         log.info("Profile updated for user: {}", userId);
         return saved.getUpdatedAt();
     }

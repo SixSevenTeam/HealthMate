@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { getDashboardSummary } from "@/entities/dashboard/api/dashboardApi";
 import {
   getIntakeLogs,
@@ -17,6 +17,7 @@ const medicationScope = ref("active");
 const periodPreset = ref("7d");
 const fromDate = ref("");
 const toDate = ref("");
+const chartWrapRef = ref(null);
 
 const scopeOptions = [
   { value: "active", label: "Активные" },
@@ -352,6 +353,9 @@ function loadStatistics() {
     medicationScope.value,
   )
     .then(async (data) => {
+      console.log("Dashboard summary loaded:", data);
+      console.log("Insights from summary:", data?.insights);
+
       summary.value = data;
 
       const apiSeries =
@@ -365,6 +369,7 @@ function loadStatistics() {
       }
     })
     .catch((error) => {
+      console.error("Error loading dashboard summary:", error);
       errorMessage.value = error.message || "Не удалось загрузить статистику";
     })
     .finally(() => {
@@ -406,6 +411,23 @@ function onIntakeMarked() {
   if (!fromDate.value || !toDate.value) return;
   loadStatistics();
 }
+
+function scrollChartToRight() {
+  if (viewMode.value !== "daily") return;
+
+  nextTick(() => {
+    const chartWrap = chartWrapRef.value;
+    if (!chartWrap) return;
+    chartWrap.scrollLeft = chartWrap.scrollWidth;
+  });
+}
+
+watch(
+  () => [viewMode.value, chartBars.value.length],
+  () => {
+    scrollChartToRight();
+  },
+);
 
 onMounted(() => {
   applyPreset("7d");
@@ -575,8 +597,11 @@ onUnmounted(() => {
             <p class="muted">Нет данных для выбранного периода</p>
           </div>
 
-          <div v-else class="chart-wrap">
-            <div class="chart-area">
+          <div v-else ref="chartWrapRef" class="chart-wrap">
+            <div
+              class="chart-area"
+              :class="{ 'chart-area--daily': viewMode === 'daily' }"
+            >
               <div class="chart-grid-lines"></div>
               <div
                 v-for="bar in chartBars"
@@ -661,13 +686,16 @@ onUnmounted(() => {
 
     <article class="card">
       <h2 class="card-title">Подсказки</h2>
-      <ul v-if="summary?.insights?.length" class="list">
+      <ul
+        v-if="Array.isArray(summary?.insights) && summary.insights.length"
+        class="list"
+      >
         <li
-          v-for="insight in summary.insights"
-          :key="insight"
+          v-for="(insight, idx) in summary.insights"
+          :key="`insight-${idx}`"
           class="list-item"
         >
-          {{ insight }}
+          {{ String(insight).trim() }}
         </li>
       </ul>
       <p v-else class="muted">Нет дополнительных подсказок</p>
@@ -700,6 +728,7 @@ onUnmounted(() => {
 .chart-shell {
   display: grid;
   gap: 20px;
+  min-width: 0;
 }
 
 .chart-summary-grid {
@@ -714,6 +743,7 @@ onUnmounted(() => {
   border: 1px solid #e4ebf7;
   border-radius: 16px;
   background: linear-gradient(180deg, #fbfcff 0%, #f5f8ff 100%);
+  min-width: 0;
 }
 
 .chart-legend {
@@ -751,15 +781,20 @@ onUnmounted(() => {
 }
 
 .chart-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .chart-area {
   position: relative;
   min-height: 280px;
+  min-width: 100%;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(18px, 1fr);
+  grid-auto-columns: minmax(26px, 1fr);
   gap: 8px;
   align-items: end;
   padding: 18px 10px 8px;
@@ -770,6 +805,11 @@ onUnmounted(() => {
   );
   background-size: 100% 25%;
   border-radius: 14px;
+}
+
+.chart-area--daily {
+  width: max-content;
+  grid-auto-columns: minmax(52px, 52px);
 }
 
 .chart-grid-lines {
@@ -819,6 +859,7 @@ onUnmounted(() => {
   margin-top: 8px;
   font-size: 11px;
   color: #5f6f87;
+  white-space: nowrap;
 }
 
 .bar-subtitle {
@@ -826,6 +867,7 @@ onUnmounted(() => {
   font-size: 10px;
   color: #8a97aa;
   text-align: center;
+  white-space: nowrap;
 }
 
 .kpi-section {

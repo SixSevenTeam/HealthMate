@@ -23,6 +23,9 @@ public class DashboardSummaryResponse {
     @JsonProperty("insights")
     private List<String> insights;
 
+    @JsonProperty("recommendations")
+    private List<String> recommendations;
+
     @JsonProperty("dailySeries")
     private List<DailySeriesDTO> dailySeries;
 

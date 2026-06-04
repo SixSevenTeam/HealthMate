@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     qdrant_timeout: int = Field(default=30)
 
     # Retrieval (поиск)
-    retrieval_top_k: int = Field(default=10)
+    retrieval_top_k: int = Field(default=8)
     retrieval_similarity_threshold: float = Field(default=0.7)
     hybrid_search_weight_semantic: float = Field(default=0.7)
     hybrid_search_weight_lexical: float = Field(default=0.3)
@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
     redis_ttl: int = Field(default=3600)
+    tips_cache_ttl_seconds: int = Field(default=3600, description="TTL для кеша подсказок в секундах")
 
     # Dataset root for local indexing (mounted from docker-compose)
     dataset_root: str = Field(default="/app/dataset/healthmate_2018-2023/data")
